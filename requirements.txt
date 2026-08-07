@@ -1,0 +1,5 @@
+# Canonical environment is managed by uv (see pyproject.toml + uv.lock).
+# This file is a convenience/fallback reference only — do not install on Windows (CPU-only torch).
+torch
+transformers
+accelerate

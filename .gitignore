@@ -1,0 +1,20 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# uv / virtualenv
+.venv/
+
+# Generated benchmark outputs (results/ tracked via .gitkeep; JSON runs are ephemeral)
+results/*.json
+
+# OS noise
+.DS_Store
+Thumbs.db
+
+# HF cache / model downloads
+.hf_cache/
