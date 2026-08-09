@@ -18,7 +18,7 @@ target**. I measured both on a consumer GPU:
   overhead eats the size advantage), and
 - on real text the target **rejected ~2 out of every 3** draft guesses.
 
-Two broken bets, no free lunch. The interesting part is *how* I got to measure that
+Two broken bets, no free speed-up. The interesting part is *how* I got to measure that
 honestly — three benchmark traps nearly produced a fake win first.
 
 ## How it works, in one picture
@@ -73,7 +73,7 @@ The trick only pays off if the draft's guesses are cheap **and** usually accepte
 4. **The verdict and what would fix it.** A bigger target, a draft trained to predict
    the target, or eliminating the fixed per-thought overhead — with numbers for each.
 
-The full plain-English explanation (with analogies) is in
+The full fun explanation (with analogies) is in
 [**`docs/learnings.md`**](docs/learnings.md).
 
 ## Try it yourself
@@ -113,3 +113,5 @@ Each folder has a short `README.md`; start with [`src/`](src/README.md) to read
 the code, [`tests/`](tests/README.md) to read the verification, and
 [`benchmarks/`](benchmarks/README.md) to reproduce the measurements.
 
+
+Again, not a complete repo, will add more details
