@@ -28,3 +28,6 @@ results/       JSON runs + consolidated Results.md (M3)
 ```
 
 > Canonical env is managed by `uv` (`pyproject.toml` + `uv.lock` committed).
+
+
+Unfinished, Will be updating this more. Current status, Spec decoding doesnt offer more speedup than the vanilla AR based decoding.
