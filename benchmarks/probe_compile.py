@@ -1,7 +1,7 @@
 """probe_compile.py — prototype: can torch.compile kill the ~20 ms fixed
 per-forward overhead at decode shapes? (TODO 6, Aug 8)
 
-Hypothesis under test (docs/why-speculative-is-slower-at-small-scale.md §3/§6):
+Hypothesis under test (docs/learnings.md — the fixed-overhead finding):
 batch-1 decode forwards are dominated by fixed kernel-launch + Python-dispatch
 overhead (~19-20 ms) that does NOT shrink with model size. If torch.compile
 (inductor fusion; `reduce-overhead` adds CUDA graphs) collapses it, the draft

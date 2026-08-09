@@ -38,7 +38,7 @@ The greedy gate doubles as the end-to-end compiled-correctness check;
 compile-mode failures are recorded as findings (status), never swallowed.
 
 --report <json>: render a markdown summary table from an existing results file
-(the Results.md deliverable, plan §7) without touching the GPU.
+(the data behind docs/results.md) without touching the GPU.
 
 Usage (WSL2):
   HF_HOME=/mnt/d/projects/hf-cache HF_HUB_OFFLINE=1 uv run python \
