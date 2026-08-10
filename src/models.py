@@ -80,6 +80,25 @@ class ModelHandle:
             self.pending_logits = out.logits[:, -1:, :]
         return out
 
+    # -- EAGLE feature capture (M4 data pipeline) -------------------------
+    @torch.no_grad()
+    def features(self, input_ids: torch.Tensor, layer_index: int = -2) -> torch.Tensor:
+        """Hidden states for ALL positions of `input_ids` (a full-prefill block).
+
+        Returns `hidden_states[layer_index]` — default -2, the second-to-top
+        layer (the layer before the LM head): the "feature" the EAGLE draft
+        head learns to predict (arXiv 2401.15077). Pure prefill with
+        use_cache=False — deliberately does NOT touch this handle's KV cache
+        or pending_logits, so feature collection can never disturb the M1-M3
+        decode paths.
+        """
+        out = self.model(
+            input_ids=input_ids,
+            use_cache=False,
+            output_hidden_states=True,
+        )
+        return out.hidden_states[layer_index]
+
     # -- standalone decode (baseline / oracle path) -----------------------
     @torch.no_grad()
     def generate(

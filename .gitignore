@@ -12,6 +12,9 @@ __pycache__/
 # Generated benchmark outputs (results/ tracked via .gitkeep; JSON runs are ephemeral)
 results/*.json
 
+# M4 data (WikiText-2 corpus + feature cache: GBs of generated tensors — never commit)
+data/
+
 # Private working docs (dev history, session state, planning) — never publish
 docs/internal/
 
