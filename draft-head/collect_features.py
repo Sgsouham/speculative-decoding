@@ -1,11 +1,11 @@
-"""collect_features.py — M4 Phase 0: the EAGLE feature-cache pipeline.
+"""collect_features.py — the draft-head feature-cache pipeline.
 
 Runs the target model (Qwen2.5-3B) over the WikiText-2 raw train corpus and
 caches, for every token position, the **second-to-top-layer hidden state** —
-the "feature" the EAGLE draft head learns to predict (arXiv 2401.15077). The
-corpus is *existing text*, so this is prefill-bound (fast), not generation.
+the "feature" the EAGLE-style draft head learns to predict (arXiv 2401.15077).
+The corpus is *existing text*, so this is prefill-bound (fast), not generation.
 
-Cache layout (data/m4/wikitext2/):
+Cache layout (data/draft-head/wikitext2/):
     manifest.json                 — model id, dims, dtype, totals, chunk bookkeeping
     chunk_000000.features.npy     — fp16 [n, hidden]   second-to-top-layer features
     chunk_000000.tokens.npy       — int64 [n]          token ids (same positions)
@@ -27,14 +27,13 @@ Design notes (same discipline as the M3 harness):
   total (already-cached tokens count against the budget).
 
 Usage (WSL2):
-    HF_HOME=/mnt/d/projects/hf-cache uv run python m4/collect_features.py --smoke 3
-    HF_HOME=/mnt/d/projects/hf-cache uv run python m4/collect_features.py --max-tokens 500000
+    HF_HOME=/mnt/d/projects/hf-cache uv run python draft-head/collect_features.py --smoke 3
+    HF_HOME=/mnt/d/projects/hf-cache uv run python draft-head/collect_features.py --max-tokens 500000
 """
 from __future__ import annotations
 
 import argparse
 import json
-import re
 import shutil
 import sys
 import time
@@ -45,24 +44,13 @@ import torch
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
+from src.cache_utils import chunk_idx as _chunk_idx  # noqa: E402
 from src.config import load_config, resolve_model_id  # noqa: E402
 from src.models import ModelHandle, load_model  # noqa: E402
 
 CORPUS_REPO = "Salesforce/wikitext"
 CORPUS_NAME = "wikitext-2-raw-v1"          # raw = keeps wiki markup; ~2.1M tokens
 CORPUS_FILENAME = "train-00000-of-00001.parquet"
-
-
-def _chunk_idx(path: Path) -> int:
-    """chunk_000042.features.pt -> 42.
-
-    Regex on the full filename (NOT Path.stem — for `chunk_000000.features.pt`
-    the stem is `chunk_000000.features`, which broke naive `split("_")`).
-    """
-    m = re.search(r"chunk_(\d+)", path.name)
-    if m is None:
-        raise ValueError(f"unexpected chunk filename: {path.name}")
-    return int(m.group(1))
 
 
 def get_corpus_text(cache_dir: Path) -> tuple[str, dict]:
@@ -111,9 +99,9 @@ def load_target_handle(model_alias: str) -> tuple[ModelHandle, object, int]:
 
 
 def main() -> None:
-    ap = argparse.ArgumentParser(description="M4 Phase 0: EAGLE feature cache (WikiText-2 -> hidden states)")
+    ap = argparse.ArgumentParser(description="draft-head: EAGLE-style feature cache (WikiText-2 -> hidden states)")
     ap.add_argument("--model", default="qwen2.5-3b", help="target alias in config/default.yaml (default: qwen2.5-3b)")
-    ap.add_argument("--out", default="data/m4/wikitext2", help="cache dir (default: data/m4/wikitext2)")
+    ap.add_argument("--out", default="data/draft-head/wikitext2", help="cache dir (default: data/draft-head/wikitext2)")
     ap.add_argument("--max-seq-len", type=int, default=1024, help="tokens per block (no padding needed)")
     ap.add_argument("--min-seq-len", type=int, default=64, help="drop corpus tail shorter than this")
     ap.add_argument("--chunk-tokens", type=int, default=100_000, help="approx tokens per chunk file")
@@ -186,7 +174,7 @@ def main() -> None:
 
     def write_manifest() -> None:
         payload = {
-            "pipeline": "m4/collect_features.py (M4 Phase 0)",
+            "pipeline": "draft-head/collect_features.py",
             "corpus": {"repo": CORPUS_REPO, "config": CORPUS_NAME, **corpus_stats},
             "model": {"alias": args.model, "hidden_size": hidden_size},
             "feature_layer": -2, "dtype": str(handle.dtype),

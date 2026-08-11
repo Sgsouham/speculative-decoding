@@ -1,15 +1,26 @@
-"""train_head.py — M4 Phase 0: train the EAGLE-1-style draft head.
+"""train_head.py — train the EAGLE-1-style draft head.
 
-Consumes the feature cache produced by m4/collect_features.py
-(data/m4/wikitext2/): fp16 second-to-top-layer features + token ids.
+Consumes the feature cache produced by draft-head/collect_features.py
+(data/draft-head/wikitext2/): fp16 second-to-top-layer features + token ids.
 
 Head (arXiv 2401.15077 §3.2):
-    FC(2h -> h)  +  one transformer decoder layer, deep-copied from the
-    target's TOP decoder layer (the layer right after the cached feature
-    layer). The target's embedding / top layer / norm / LM head are FROZEN
-    and reused. Per position i:  [f_i ; embed(t_{i+1})] -> f̂_{i+1}, trained
-    with MSE against the cached f_{i+1}. FC is identity-initialized on the
-    feature half ([f_i ; e] -> f_i), a principled warm start.
+    FC(2h -> h)  +  N transformer decoder layers (default 1), deep-copied
+    from the target's TOP N decoder layers (the layers right after the
+    cached feature layer). The target's embedding / top layers / norm / LM
+    head are FROZEN and reused. Per position i:  [f_i ; embed(t_{i+1})] ->
+    f̂_{i+1}. FC is identity-initialized on the feature half ([f_i ; e] ->
+    f_i), a principled warm start. --n-layers 2 is the capacity probe
+    (Aug 11).
+
+Loss (--loss, the objective lever — Aug 11):
+    mse    pure feature MSE (the original Phase-0 loss; 100 epochs of this
+           plateaued at ~0.485 greedy_agreement while val_mse kept falling).
+    eagle  the paper's ACTUAL loss (arXiv 2401.15077 §3.2): Smooth L1 on the
+           predicted features + ce_weight × cross-entropy between the frozen
+           decode path's logits and the true token two ahead (t_{i+2}). The
+           CE term optimizes the argmax agreement we gate on, not just the
+           features. This is the probe after data (done) and depth (2-layer
+           probe: negative) failed to move agreement.
 
 Gate metric (plan §4 step 4a): GREEDY AGREEMENT = the fraction of positions
 where the head's top-1 token equals the target's own top-1 token, measured
@@ -22,27 +33,29 @@ Training precision: head params fp32 (small, ~50M — fp32 costs nothing and
 avoids fp16 instability), cache features fp16 upcast per batch, MSE in fp32.
 The engine casts the head to fp16 at deploy.
 
-Outputs (--out, default data/m4/):
+Outputs (--out, default data/draft-head/):
     head_fc.pt        FC state dict (fp32, best epoch)
-    head_layer.pt     decoder-layer state dict (fp32, best epoch)
+    head_layers.pt    decoder-layer stack state dict (fp32, best epoch)
     train_report.json per-epoch val metrics + gate verdict
 
 Usage (WSL2):
-    HF_HOME=/mnt/d/projects/hf-cache uv run python m4/train_head.py --epochs 5
-    HF_HOME=/mnt/d/projects/hf-cache uv run python m4/train_head.py --resume --epochs 5
-    HF_HOME=/mnt/d/projects/hf-cache uv run python m4/train_head.py --self-test
+    HF_HOME=/mnt/d/projects/hf-cache uv run python draft-head/train_head.py --epochs 5
+    HF_HOME=/mnt/d/projects/hf-cache uv run python draft-head/train_head.py --resume --epochs 5
+    HF_HOME=/mnt/d/projects/hf-cache uv run python draft-head/train_head.py --loss eagle --epochs 10  # paper loss: Smooth L1 + 0.1*CE
+    HF_HOME=/mnt/d/projects/hf-cache uv run python draft-head/train_head.py --self-test
 
---resume: continue from the BEST saved checkpoint (head_fc.pt / head_layer.pt)
-and the epoch numbering in train_report.json, instead of re-training from the
-identity init. Same LR unless --lr is passed; the best-checkpoint tracking
+--resume: continue from the BEST saved checkpoint (head_fc.pt /
+head_layers.pt) and the epoch numbering in train_report.json, instead of
+re-training from the identity init. A checkpoint's layer count must match
+--n-layers (a 1-layer head cannot be resumed as 2-layer). Same LR unless --lr is passed; the best-checkpoint tracking
 only overwrites the saved weights when greedy_agreement improves, so a resume
 that doesn't beat the previous best leaves the checkpoint untouched.
 
 Live stats: per-step train loss + per-epoch val metrics are written to
-TensorBoard under --logdir (default data/m4/runs/<run-tag>/, flush every 5s).
+TensorBoard under --logdir (default data/draft-head/runs/<run-tag>/, flush every 5s).
 A resume reuses the previous run's tag so the curves stay continuous. Watch:
 
-    uv run tensorboard --logdir data/m4/runs --port 6006
+    uv run tensorboard --logdir data/draft-head/runs --port 6006
 
 ...then open http://localhost:6006 (from the Windows browser; WSL shares
 localhost).
@@ -65,9 +78,9 @@ from torch.utils.tensorboard import SummaryWriter
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
+from src.cache_utils import chunk_idx as _chunk_idx  # noqa: E402
 from src.config import load_config, resolve_model_id  # noqa: E402
 from src.models import load_model  # noqa: E402
-from m4.collect_features import _chunk_idx  # noqa: E402
 
 
 # --------------------------------------------------------------------------
@@ -108,7 +121,7 @@ def load_chunks(cache_dir: Path, val_frac: float, block_len: int = 1024):
     """
     paths = sorted(cache_dir.glob("chunk_*.features.pt"), key=_chunk_idx)
     if not paths:
-        raise SystemExit(f"no chunks in {cache_dir} — run m4/collect_features.py first")
+        raise SystemExit(f"no chunks in {cache_dir} — run draft-head/collect_features.py first")
     blocks = []
     for p in paths:
         feats = torch.load(p, weights_only=True)
@@ -133,21 +146,24 @@ def load_chunks(cache_dir: Path, val_frac: float, block_len: int = 1024):
 # Model wiring
 # --------------------------------------------------------------------------
 class EagleDraftHead(nn.Module):
-    """FC(2h -> h) + one decoder layer (copy of the target's TOP layer).
+    """FC(2h -> h) + N decoder layers (copies of the target's TOP N layers).
 
-    The target's embedding / top layer / norm / LM head are frozen and used
+    The target's embedding / top layers / norm / LM head are frozen and used
     externally by the training loop. FC is identity-initialized on the
-    feature half so the head starts as the identity feature map.
+    feature half so the head starts as the identity feature map; the decoder
+    layers are warm-started from the target's own weights (EAGLE's trick), so
+    a 2-layer head is a deeper copy of the target's final computation rather
+    than random capacity.
     """
 
-    def __init__(self, hidden: int, decoder_layer: nn.Module, rotary_emb: nn.Module):
+    def __init__(self, hidden: int, decoder_layers: list[nn.Module], rotary_emb: nn.Module):
         super().__init__()
         self.fc = nn.Linear(2 * hidden, hidden)
         with torch.no_grad():
             self.fc.weight.zero_()
             self.fc.weight[:, :hidden] = torch.eye(hidden)
             self.fc.bias.zero_()
-        self.layer = copy.deepcopy(decoder_layer).float()  # fp32 training
+        self.layers = nn.ModuleList(copy.deepcopy(l).float() for l in decoder_layers)  # fp32
         self.rotary_emb = rotary_emb
         self.hidden = hidden
 
@@ -158,34 +174,66 @@ class EagleDraftHead(nn.Module):
         pos = torch.arange(s, device=x.device).unsqueeze(0).expand(b, -1)
         cos, sin = self.rotary_emb(x, pos)
         mask = causal_mask(s, x.device, x.dtype)
-        out = self.layer(
-            x,
-            attention_mask=mask,
-            position_ids=pos,
-            position_embeddings=(cos, sin),
-            use_cache=False,
-        )
-        if isinstance(out, tuple):
-            out = out[0]
-        return out
+        for layer in self.layers:
+            out = layer(
+                x,
+                attention_mask=mask,
+                position_ids=pos,
+                position_embeddings=(cos, sin),
+                use_cache=False,
+            )
+            x = out[0] if isinstance(out, tuple) else out
+        return x
 
 
-@torch.no_grad()
-def run_top_layer(model, x: torch.Tensor, device) -> torch.Tensor:
-    """Map cached features (layer -2 space, [B, S, h]) through the frozen
-    target TOP decoder layer + final norm — the head of the LM path. x must
-    be the model's dtype (fp16 in production, matching the engine)."""
+def run_top_layer_grad(model, x: torch.Tensor, device) -> torch.Tensor:
+    """Decode path (frozen top layer + final norm) for the CE term of
+    --loss eagle — the same shared last mile the eval gate uses, but
+    grad-enabled so the CE gradient flows through it to the head's predicted
+    feature. The target's params are requires_grad=False (frozen in main), so
+    no gradients are stored for them. Casts x to the model's dtype (fp16 in
+    production; fp32 in the CPU self-test)."""
+    dt = next(model.model.layers[-1].parameters()).dtype
     b, s, _ = x.shape
     pos = torch.arange(s, device=device).unsqueeze(0).expand(b, -1)
-    cos, sin = model.model.rotary_emb(x, pos)
-    mask = causal_mask(s, device, x.dtype)
+    cos, sin = model.model.rotary_emb(x.to(dt), pos)
+    mask = causal_mask(s, device, dt)
     out = model.model.layers[-1](
-        x, attention_mask=mask, position_ids=pos,
+        x.to(dt), attention_mask=mask, position_ids=pos,
         position_embeddings=(cos, sin), use_cache=False,
     )
     if isinstance(out, tuple):
         out = out[0]
     return model.model.norm(out)
+
+
+@torch.no_grad()
+def run_top_layer(model, x: torch.Tensor, device) -> torch.Tensor:
+    """no-grad wrapper of run_top_layer_grad for eval/precompute (identical
+    decode path; the self-test's synthetic fp32 model works too, since the
+    dtype cast is internal)."""
+    return run_top_layer_grad(model, x, device)
+
+
+def eagle_loss(head, fused, tgt_f, labels, model, device, ce_weight: float = 0.1):
+    """EAGLE-style loss (arXiv 2401.15077 §3.2):
+    L = SmoothL1(f̂_{i+1}, f_{i+1}) + ce_weight · CE(logits, t_{i+2}).
+
+    Deliberate simplification vs the paper: L_cls there is a SOFT-target CE
+    (CE between the target's distribution p_{i+2} and the predicted p̂_{i+2});
+    we use hard labels (the actual cached token t_{i+2}) — the standard
+    practical variant, and it costs one lm_head pass, not two.
+
+    labels are the TRUE tokens TWO ahead (t_{i+2}) — the alignment the fixed
+    top1_acc metric uses (head logits at i+1 are a causal prediction of
+    t_{i+2}); logits[:, :-1] drops the last predicted position to match.
+    Returns (total, reg, cls) for live logging."""
+    pred = head(fused).float()
+    reg = F.smooth_l1_loss(pred, tgt_f)
+    top = run_top_layer_grad(model, pred, device)
+    logits = model.lm_head(top)[:, :-1].reshape(-1, model.lm_head.out_features)
+    cls = F.cross_entropy(logits, labels.to(device))
+    return reg + ce_weight * cls, reg, cls
 
 
 def run_self_test() -> None:
@@ -201,7 +249,7 @@ def run_self_test() -> None:
     )
     model = Qwen2ForCausalLM(cfg).eval()
     h = cfg.hidden_size
-    head = EagleDraftHead(h, model.model.layers[-1], model.model.rotary_emb)
+    head = EagleDraftHead(h, [model.model.layers[-1]], model.model.rotary_emb)
     feats = torch.randn(48, h)
     toks = torch.randint(0, cfg.vocab_size, (48,))
     f, t_next, tgt_f, tgt_t = make_pairs(feats, toks)
@@ -211,11 +259,51 @@ def run_self_test() -> None:
     loss = F.mse_loss(pred, tgt_f.unsqueeze(0))
     loss.backward()
     assert head.fc.weight.grad is not None
-    assert head.layer.self_attn.q_proj.weight.grad is not None
+    assert head.layers[0].self_attn.q_proj.weight.grad is not None
+
+    # 2-layer variant: stack the target's top 2 layers, same wiring. Use
+    # detached copies of the inputs so its backward graph is independent of
+    # the first head's (whose saved tensors were freed above).
+    head2 = EagleDraftHead(h, [model.model.layers[-1], model.model.layers[-2]],
+                           model.model.rotary_emb)
+    pred2 = head2(fused.detach())
+    assert pred2.shape == (1, f.shape[0], h), pred2.shape
+    F.mse_loss(pred2, tgt_f.unsqueeze(0)).backward()
+    assert head2.layers[1].self_attn.q_proj.weight.grad is not None
+
+    # checkpoint round-trip: ModuleList state_dict save -> n_saved count -> load
+    # (guards the resume path — the most bug-prone new code)
+    import io
+
+    buf = io.BytesIO()
+    torch.save(head2.layers.state_dict(), buf)
+    buf.seek(0)
+    sd = torch.load(buf, weights_only=True)
+    n_saved = len({k.split(".", 1)[0] for k in sd})
+    assert n_saved == 2, n_saved
+    head3 = EagleDraftHead(h, [model.model.layers[-1], model.model.layers[-2]],
+                           model.model.rotary_emb)
+    head3.layers.load_state_dict(sd)
+    assert torch.equal(head3.layers[1].self_attn.q_proj.weight,
+                       head2.layers[1].self_attn.q_proj.weight)
     top = run_top_layer(model, tgt_f.unsqueeze(0), torch.device("cpu"))
     logits = model.lm_head(top)
     assert logits.shape == (1, tgt_f.shape[0], cfg.vocab_size), logits.shape
     agree = float((logits.argmax(-1)[0] == tgt_t).float().mean())
+
+    # eagle-loss path: CE must reach the head THROUGH the frozen top layer +
+    # lm_head, with labels aligned to t_{i+2} (the fixed top1_acc alignment).
+    # ehead is constructed BEFORE the freeze so its deep-copied layers stay
+    # trainable (deepcopy preserves requires_grad).
+    ehead = EagleDraftHead(h, [model.model.layers[-1]], model.model.rotary_emb)
+    model.requires_grad_(False)
+    fused2 = torch.cat([f, model.model.embed_tokens(t_next)], dim=-1).unsqueeze(0)
+    loss_e, reg_e, cls_e = eagle_loss(
+        ehead, fused2, tgt_f.unsqueeze(0), tgt_t[1:], model, torch.device("cpu"))
+    loss_e.backward()
+    assert ehead.fc.weight.grad is not None
+    assert ehead.layers[0].self_attn.q_proj.weight.grad is not None
+    assert model.lm_head.weight.grad is None, "frozen decode path must not store grads"
 
     # load_chunks re-blocking test — regression guard for the OOM-class bug
     # (a flat ~100K-token chunk must never reach the model as one sequence).
@@ -232,18 +320,108 @@ def run_self_test() -> None:
         assert all(f.shape[0] == 1024 for f, _ in tr + va)   # never a giant sequence
         assert len(va) == 1 and len(tr) == 2                 # 10% of 3 blocks -> 1 val
 
+    # results-log render test: a synthetic report must produce valid markdown
+    # (this runs only at the end of a real GPU run, so a format bug would
+    # crash AFTER training — test it here).
+    import tempfile as _tmp
+
+    fake = {"epochs": [
+        {"epoch": 41, "train_mse": 11.8, "val_mse": 15.9, "top1_acc": 0.317,
+         "greedy_agreement": 0.470, "target_top1_acc": 0.514},
+        {"epoch": 42, "train_mse": 11.6, "val_mse": 15.8, "top1_acc": 0.318,
+         "greedy_agreement": 0.474, "target_top1_acc": 0.514},
+    ], "config": {"n_layers": 2, "loss": "eagle", "ce_weight": 0.1,
+                  "model": "qwen2.5-3b", "lr": 0.0005, "seed": 42,
+                  "resume": True},
+        "head_params": 162544640,
+        "tensorboard_dir": "data/draft-head/runs/eagle_head_20260811_090004",
+        "data": {"total": 3014781, "train": 2713303, "val": 301478},
+        "best": {"epoch": 42, "greedy_agreement": 0.474, "target_top1_acc": 0.514},
+        "gate": {"verdict": "BORDERLINE — above baseline but thin"}}
+    with _tmp.TemporaryDirectory() as td:
+        fake_log = Path(td) / "draft-head-training.md"
+        write_results_log(fake, 0, log_path=fake_log)
+        md = fake_log.read_text(encoding="utf-8")
+        assert "| 41 |" in md and "| 42 |" in md and "0.474" in md
+        assert "Smooth L1 + 0.1×CE" in md and "BORDERLINE" in md
+
     print(f"self-test OK: pred {tuple(pred.shape)} loss {loss.item():.4f} | "
           f"target-logits {tuple(logits.shape)} | top1-vs-actual {agree:.2f} | "
+          f"eagle-loss reg {reg_e.item():.4f} cls {cls_e.item():.4f} | "
           f"head params {sum(p.numel() for p in head.parameters()):,}")
+
+
+# --------------------------------------------------------------------------
+# Committable results log
+# --------------------------------------------------------------------------
+def write_results_log(report: dict, epochs_before: int,
+                      log_path: Path | None = None) -> None:
+    """Append a run section to the COMMITTABLE log results/draft-head-training.md.
+
+    The heavy per-epoch JSON lives under data/ (gitignored — GBs of tensors).
+    This markdown is the small, human-readable, tracked record so the training
+    story ships to GitHub without the cache. Append-only; each resume appends
+    only ITS OWN new epochs (report accumulates across runs). log_path is
+    injectable for the self-test (defaults to results/draft-head-training.md)."""
+    log = log_path or (REPO_ROOT / "results" / "draft-head-training.md")
+    log.parent.mkdir(parents=True, exist_ok=True)
+    es = report.get("epochs", [])
+    new_es = es[epochs_before:]
+    if not new_es:
+        return
+    cfg = report.get("config", {})
+    run_tag = Path(report.get("tensorboard_dir", "")).name or "run"
+    data = report.get("data", {})
+    best = report.get("best") or {}
+    gate = report.get("gate") or {}
+    head = "FC + %d decoder layer%s (warm from target's top %d)" % (
+        cfg.get("n_layers", 1), "s" if cfg.get("n_layers", 1) != 1 else "",
+        cfg.get("n_layers", 1))
+    loss = cfg.get("loss", "mse")
+    if loss == "eagle":
+        loss_desc = f"eagle (Smooth L1 + {cfg.get('ce_weight', 0.1)}×CE)"
+    else:
+        loss_desc = "mse (pure feature MSE)"
+    resume = "resume" if cfg.get("resume") else "fresh"
+    rows = []
+    prev = None
+    for e in new_es:
+        d = f"{e['greedy_agreement'] - prev['greedy_agreement']:+.3f}" if prev else "—"
+        rows.append(
+            f"| {e['epoch']} | {e.get('train_mse', float('nan')):.2f} "
+            f"| {e['val_mse']:.2f} | {e['top1_acc']:.3f} "
+            f"| {e['greedy_agreement']:.3f} | {d} |")
+        prev = e
+    verdict = (gate.get("verdict") or "?").split(" — ")[0]
+    section = (
+        f"\n## {run_tag} · {resume} · n_layers {cfg.get('n_layers', 1)} · "
+        f"{loss_desc}\n"
+        f"- model {cfg.get('model', '?')} · lr {cfg.get('lr', '?')} · seed {cfg.get('seed', '?')} · "
+        f"head = {head} ({report.get('head_params', '?'):,} params)\n"
+        f"- data: {data.get('total', '?'):,} cached → {data.get('train', '?'):,} train / "
+        f"{data.get('val', '?'):,} val · epochs {new_es[0]['epoch']}–{new_es[-1]['epoch']}\n"
+        f"- target_top1_acc (corpus predictability ceiling): "
+        f"{best.get('target_top1_acc', float('nan')):.3f}\n"
+        f"- **best greedy_agreement {best.get('greedy_agreement', float('nan')):.3f} "
+        f"@ epoch {best.get('epoch', '?')}** · gate: **{verdict}**\n"
+        f"\n| epoch | train_mse | val_mse | top1_acc | greedy_agreement | Δ |\n"
+        f"|---|---|---|---|---|---|\n" + "\n".join(rows) + "\n"
+    )
+    with open(log, "a", encoding="utf-8") as fh:
+        fh.write(section)
+    print(f"appended run to {log}", flush=True)
 
 
 # --------------------------------------------------------------------------
 # Training
 # --------------------------------------------------------------------------
 def main() -> None:
-    ap = argparse.ArgumentParser(description="M4 Phase 0: train the EAGLE-1 draft head (FC + 1 decoder layer)")
-    ap.add_argument("--cache", default="data/m4/wikitext2", help="feature cache dir (from collect_features.py)")
-    ap.add_argument("--out", default="data/m4", help="output dir for head weights + report")
+    ap = argparse.ArgumentParser(description="draft-head: train the EAGLE-1-style draft head (FC + N decoder layers)")
+    ap.add_argument("--n-layers", type=int, default=1,
+                    help="decoder layers in the head, warm-copied from the target's top N "
+                         "(default 1; 2 = the Aug 11 capacity probe)")
+    ap.add_argument("--cache", default="data/draft-head/wikitext2", help="feature cache dir (from collect_features.py)")
+    ap.add_argument("--out", default="data/draft-head", help="output dir for head weights + report")
     ap.add_argument("--model", default="qwen2.5-3b", help="target alias in config/default.yaml")
     ap.add_argument("--device", default="cuda", choices=["cuda", "cpu"])
     ap.add_argument("--epochs", type=int, default=5)
@@ -251,11 +429,20 @@ def main() -> None:
     ap.add_argument("--batch-blocks", type=int, default=4,
                     help="gradient accumulation over N blocks (effective batch ~N*1022 pairs)")
     ap.add_argument("--val-frac", type=float, default=0.1, help="held-out tail of the cache")
-    ap.add_argument("--logdir", default="data/m4/runs",
+    ap.add_argument("--logdir", default="data/draft-head/runs",
                     help="TensorBoard log root (each run gets its own subdir; resume reuses it)")
     ap.add_argument("--seed", type=int, default=42)
     ap.add_argument("--resume", action="store_true",
                     help="continue from the best saved checkpoint + report (epoch numbering picks up)")
+    ap.add_argument("--loss", choices=["mse", "eagle"], default="mse",
+                    help="training objective: mse = pure feature MSE (original Phase-0 loss); "
+                         "eagle = the paper's real loss — Smooth L1 on features + ce_weight × "
+                         "cross-entropy on tokens (optimizes the argmax agreement we gate on). "
+                         "The objective lever, Aug 11.")
+    ap.add_argument("--ce-weight", type=float, default=0.1,
+                    help="weight of the token cross-entropy term in --loss eagle "
+                         "(the paper uses w_cls = 0.1; classification loss runs an order of "
+                         "magnitude larger than the feature regression loss)")
     ap.add_argument("--self-test", action="store_true", help="tiny synthetic-model wiring test, then exit")
     args = ap.parse_args()
 
@@ -287,22 +474,47 @@ def main() -> None:
     print(f"cache: {total_tokens:,} tokens -> {n_train:,} train / {n_val:,} val", flush=True)
 
     # --- head + optimizer -------------------------------------------------
-    head = EagleDraftHead(hidden, model.model.layers[-1], model.model.rotary_emb)
+    head = EagleDraftHead(
+        hidden,
+        [model.model.layers[-i] for i in range(1, args.n_layers + 1)],
+        model.model.rotary_emb,
+    )
     head.to(device)
     n_params = sum(p.numel() for p in head.parameters())
-    print(f"head: FC(2*{hidden}->{hidden}) + decoder layer — {n_params:,} trainable params", flush=True)
+    print(f"head: FC(2*{hidden}->{hidden}) + {args.n_layers} decoder layer(s) "
+          f"(warm copies of the target's top {args.n_layers}) — {n_params:,} trainable params", flush=True)
+    # Freeze the target AFTER the head deep-copied its layers. Everything
+    # downstream of the head (top layer, final norm, LM head) stays frozen:
+    # with --loss eagle the CE gradient flows through that shared machinery to
+    # the head, and freezing means no gradients accumulate on the target's
+    # params (they are not in the optimizer).
+    for p in model.parameters():
+        p.requires_grad_(False)
 
     # --- resume bookkeeping ------------------------------------------------
-    report = {"epochs": [], "config": vars(args), "head_params": n_params}
+    report = {"epochs": [], "config": vars(args), "head_params": n_params,
+              "data": {"total": total_tokens, "train": n_train, "val": n_val}}
     best = None
     start_epoch = 0
     if args.resume:
-        fc_path, layer_path = out_dir / "head_fc.pt", out_dir / "head_layer.pt"
-        if not (fc_path.exists() and layer_path.exists()):
+        fc_path, layer_path = out_dir / "head_fc.pt", out_dir / "head_layers.pt"
+        legacy_path = out_dir / "head_layer.pt"   # pre-Aug-11 1-layer format
+        have_layers = layer_path.exists() or (args.n_layers == 1 and legacy_path.exists())
+        if not (fc_path.exists() and have_layers):
             raise SystemExit(f"--resume: no checkpoint in {out_dir} — run without --resume first")
         head.fc.load_state_dict(torch.load(fc_path, weights_only=True))
-        head.layer.load_state_dict(torch.load(layer_path, weights_only=True))
-        print(f"resumed weights from {fc_path.name} + {layer_path.name}", flush=True)
+        if layer_path.exists():
+            sd = torch.load(layer_path, weights_only=True)
+            n_saved = len({k.split(".", 1)[0] for k in sd})
+            if n_saved != args.n_layers:
+                raise SystemExit(f"--resume: checkpoint has {n_saved} decoder layer(s) but "
+                                 f"--n-layers {args.n_layers} — architecture mismatch; "
+                                 f"train a different depth fresh")
+            head.layers.load_state_dict(sd)
+        else:  # legacy bare 1-layer state dict (guarded above)
+            head.layers[0].load_state_dict(torch.load(legacy_path, weights_only=True))
+        print(f"resumed weights from {fc_path.name} + "
+              f"{layer_path.name if layer_path.exists() else legacy_path.name}", flush=True)
         report_path = out_dir / "train_report.json"
         if report_path.exists():
             try:
@@ -315,6 +527,7 @@ def main() -> None:
                 best = prev.get("best") or None  # seed FIRST (report aliases prev below)
                 report = prev
                 report["config"] = vars(args)
+                report["data"] = {"total": total_tokens, "train": n_train, "val": n_val}
                 report.pop("best", None)  # recomputed at the end (across both runs)
                 if best:
                     print(f"resumed report: continuing from epoch {start_epoch} "
@@ -379,7 +592,7 @@ def main() -> None:
         head.train()
         order = list(range(len(train_chunks)))
         random.shuffle(order)
-        total_loss = 0.0
+        total_loss = reg_sum = cls_sum = 0.0
         opt.zero_grad()
         for bi, ci in enumerate(order):
             feats, toks = train_chunks[ci]
@@ -388,7 +601,16 @@ def main() -> None:
                 e = model.model.embed_tokens(t_next.to(device))
             fused = torch.cat([f.float().to(device), e.float()], dim=-1).unsqueeze(0)
             tgt = tgt_f.float().unsqueeze(0).to(device)
-            loss = F.mse_loss(head(fused).float(), tgt)
+            if args.loss == "eagle":
+                # head logits at i+1 predict t_{i+2} (causal LM; same alignment
+                # as the fixed top1_acc metric) — drop the last predicted
+                # position and label against toks[2:].
+                loss, reg_l, cls_l = eagle_loss(
+                    head, fused, tgt, toks[2:], model, device, args.ce_weight)
+                reg_sum += reg_l.item()
+                cls_sum += cls_l.item()
+            else:
+                loss = F.mse_loss(head(fused).float(), tgt)
             (loss / args.batch_blocks).backward()
             total_loss += loss.item()
             tb_step += 1
@@ -400,9 +622,13 @@ def main() -> None:
                 print(f"  epoch {epoch} block {bi + 1}/{len(order)} "
                       f"loss {total_loss / (bi + 1):.5f}", flush=True)
                 writer.add_scalar("train/loss_step", total_loss / (bi + 1), tb_step)
+                if args.loss == "eagle":
+                    writer.add_scalar("train/reg", reg_sum / (bi + 1), tb_step)
+                    writer.add_scalar("train/cls", cls_sum / (bi + 1), tb_step)
         return total_loss / len(order)
 
     # --- run --------------------------------------------------------------
+    epochs_before = len(report["epochs"])   # results log: only THIS run's rows
     for epoch in range(start_epoch + 1, start_epoch + 1 + args.epochs):
         t_ep = time.time()
         train_mse = train_epoch(epoch)
@@ -415,7 +641,7 @@ def main() -> None:
         if best is None or metrics["greedy_agreement"] > best["greedy_agreement"]:
             best = dict(metrics)
             torch.save(head.fc.state_dict(), out_dir / "head_fc.pt")
-            torch.save(head.layer.state_dict(), out_dir / "head_layer.pt")
+            torch.save(head.layers.state_dict(), out_dir / "head_layers.pt")
             print(f"  -> saved best checkpoint (epoch {epoch})", flush=True)
         writer.add_scalar("train/mse", train_mse, epoch)
         writer.add_scalar("val/mse", metrics["val_mse"], epoch)
@@ -448,10 +674,11 @@ def main() -> None:
                 "predictability (off-by-one in top1_acc fixed Aug 10).",
     })
     (out_dir / "train_report.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
+    write_results_log(report, epochs_before)
     writer.close()
     print(f"\nbest: top1_acc {best['top1_acc']:.3f} | greedy_agreement {agree:.3f} (epoch {best['epoch']})")
     print(f"GATE: {verdict}")
-    print(f"wrote {out_dir / 'head_fc.pt'}, {out_dir / 'head_layer.pt'}, train_report.json")
+    print(f"wrote {out_dir / 'head_fc.pt'}, {out_dir / 'head_layers.pt'}, train_report.json")
     print(f"tensorboard logs: {tb_dir} (watch: uv run tensorboard --logdir {tb_root})")
 
 

@@ -80,7 +80,7 @@ class ModelHandle:
             self.pending_logits = out.logits[:, -1:, :]
         return out
 
-    # -- EAGLE feature capture (M4 data pipeline) -------------------------
+    # -- EAGLE feature capture (draft-head data pipeline) -------------------------
     @torch.no_grad()
     def features(self, input_ids: torch.Tensor, layer_index: int = -2) -> torch.Tensor:
         """Hidden states for ALL positions of `input_ids` (a full-prefill block).

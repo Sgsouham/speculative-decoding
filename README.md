@@ -107,7 +107,7 @@ tests/         correctness + equivalence tests
 benchmarks/    the M3 sweep harness + probes
 docs/          the story (learnings, blockers, results)
 results/       raw benchmark JSONs (gitignored)
-m4/            the next chapter: training an EAGLE-style draft head (in progress)
+draft-head/    the next chapter: training an EAGLE-style draft head (in progress)
 ```
 
 Each folder has a short `README.md`; start with [`src/`](src/README.md) to read
