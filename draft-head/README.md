@@ -51,7 +51,7 @@ decides whether a trained draft is good enough to actually speed up decoding
 
 | vanilla baseline | PASS | BORDERLINE | best so far |
 |---|---|---|---|
-| ~0.35 | ≥ 0.50 | 0.42–0.50 | 0.485 (1-layer, epoch 96) — objective probe (`--loss eagle`) next |
+| ~0.35 | ≥ 0.50 | 0.42–0.50 | 0.485 (1-layer, e96) — CE objective probe in flight (0.468 @ e6) |
 
 ## What the training so far taught us
 

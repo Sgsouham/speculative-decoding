@@ -98,6 +98,20 @@ The benchmark harness sweeps prompt length × draft length × temperature and wr
 | [`docs/blockers.md`](docs/blockers.md) | Every bug I hit, in *symptom → root cause → fix → lesson* form, plus my debugging playbook. |
 | [`docs/results.md`](docs/results.md) | The complete 108-config benchmark table and how to read it. |
 
+## Training tracker — the draft-head chapter
+
+Latest first — newest experiment on top. Full per-epoch tables:
+[`results/draft-head-training.md`](results/draft-head-training.md).
+
+- **Objective probe** (`--loss eagle`, 1-layer): agreement **0.468** after 6
+  epochs (0.387 at epoch 1). The steepest curve yet — 6 epochs matched what
+  pure MSE took ~35–40 to reach. Stopped at 6/10; resuming to epoch 20.
+  Gate: PASS = ≥ 0.50.
+- **2-layer capacity probe**: **0.474** @ epoch 40 (BORDERLINE). Depth ruled
+  out — features improved, agreement didn't.
+- **Data lever**: 500K → 3.0M tokens lifted the 1-layer MSE head from 0.376
+  to **0.485** @ epoch 96 (BORDERLINE, best head on disk).
+
 ## Layout
 
 ```
