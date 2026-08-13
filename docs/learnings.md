@@ -171,6 +171,85 @@ the next chapter.
 
 ---
 
+## The engine chapter — the trained draft loses at decode (three walls)
+
+Lever 2's final exam: we built the real decode engine around the trained head
+(the e26 CE checkpoint, 0.490 teacher-forced agreement) and measured it on
+real text with the same three-gate discipline as the main story —
+token-identical correctness, acceptance, and honest timing. **All three gates
+passed or failed cleanly, and the verdict is decisive: the trained draft loses
+at decode — for three independent reasons, only one of which is hardware.**
+
+- **The engine was correct.** Every configuration produced token-identical
+  output to plain decoding (a handful of recorded floating-point coin-flip
+  near-ties, per Trap 3). The alignment math — the thing most likely to be
+  subtly wrong — was right.
+- **Acceptance collapsed at decode.** Teacher-forced, the head agreed with the
+  target 49% of the time. Chained at decode — the head predicting its own next
+  feature instead of reading the target's real one — acceptance dropped to
+  **3–9%**. Even the *first* proposal (which was fed the target's true
+  features) was accepted only ~26% of the time.
+- **Even perfect acceptance would not have won on this hardware.** The
+  measured timing math: each draft-chain + verify cycle costs ~90 ms to
+  produce ~1.3 tokens, while plain decoding produces one token every ~35 ms.
+  Break-even needs ~1.6 accepted tokens per verify; we measured 0.26. Even if
+  every first proposal were accepted (τ = 1), the engine would still be
+  **0.78× slower** — the fixed per-call overhead (the commute analogy, now
+  living *inside* the draft) eats the win.
+
+**The three walls, in plain English:**
+
+1. **The target's own ceiling.** The target only commits to a clear winner on
+   ~51% of positions in real text. No draft — however well trained — can agree
+   with the target more than the target agrees with itself. Hardware cannot fix
+   this.
+2. **The transfer gap.** The head trained on ~1000-token context windows, then
+   at decode it saw a 1–5 token buffer — a different world. Trained on
+   WikiText, tested on diverse prose. This collapse is a training-shape
+   mismatch, not a GPU problem.
+3. **The hardware economics.** Each small head forward pays the same fixed
+   launch cost as a full-model call. This is the wall a bigger target model
+   fixes.
+
+> **The honest verdict:** the gate did its job — it caught the transfer
+> failure before any scaling commitment. The trained draft lost at decode for
+> the same reason the off-the-shelf draft lost in the main story: speculative
+> decoding only wins when the target is expensive enough that the draft's
+> fixed cost is a rounding error.
+
+### What pair *would* have worked (even if it didn't fit our hardware)
+
+Our M3 data holds the surprise: **acceptance was never the binding constraint
+at our scale.** Every same-family pair accepted ~2 of every 4 drafted tokens
+(τ ≈ 2, acceptance 49–65%) — a genuinely good draft — and *still* lost
+(x0.30–0.65), because the machinery's fixed cost exceeded the target's own
+per-token cost at 1.5–3B scale. So the fix was never a *stronger* draft — it
+was a *bigger* target, which makes the fixed overhead a smaller fraction.
+
+The same-family pairs that the economics say would win (needing more than our
+12 GB):
+
+- **qwen2.5-0.5b → qwen2.5-7b** (~16 GB fp16) — the 0.5b draft stays cheap,
+  the 7b target is ~3–4× slower than our 3b, and measured τ ≈ 2 carries
+  over → projected ~1.5–2×. The cheapest configuration that likely wins.
+- **qwen2.5-0.5b → qwen2.5-14b** (~30 GB fp16, or ~16 GB at 8-bit) — the
+  target forward now dominates comfortably → projected 2×+. The literature's
+  canonical example has the same shape: Llama-3.2-1B → Llama-3.1-70B ≈ 4×.
+- **EAGLE on qwen2.5-14b** — EAGLE-2's reported 3–4× speedups live at
+  13–33B scale. But size alone does **not** fix Wall 2: the transfer collapse
+  (0.49 → 0.09) must be addressed separately — the leading fix is feeding the
+  head a window of recent *actual* feature/token pairs at decode, restoring
+  its training-time context.
+
+> **The moral of the whole repo, in one line:** speculative decoding is a bet
+> on economics, not a bet on draft quality — the draft's agreement only
+> matters once the target is expensive enough that the draft's fixed cost is
+> cheap by comparison. On small consumer hardware, every configuration loses;
+> the fix is a bigger target, and the trained-draft (EAGLE) path needs one
+> extra fix that size alone cannot buy.
+
+---
+
 ## A tiny glossary (for the non-technical reader)
 
 | Term | Meaning |
