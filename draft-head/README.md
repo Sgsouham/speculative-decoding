@@ -51,7 +51,7 @@ decides whether a trained draft is good enough to actually speed up decoding
 
 | vanilla baseline | PASS | BORDERLINE | best so far |
 |---|---|---|---|
-| ~0.35 | ≥ 0.50 | 0.42–0.50 | 0.485 (1-layer, e96) — CE objective probe in flight (0.468 @ e6) |
+| ~0.35 | ≥ 0.50 | 0.42–0.50 | **0.490** (1-layer CE, e26) — all levers explored; build the engine |
 
 ## What the training so far taught us
 
@@ -66,7 +66,10 @@ further in:
    knife-edge comparison in a 151,936-way space, and the corpus itself is only
    ~51% predictable for the target (`target_top1_acc` = 0.514) — so part of the
    wall is irreducible.
-3. **The objective is the remaining lever.** We trained what the features
-   *are* (MSE) but measured whether the target *agrees* (argmax). The paper
-   trains both at once (`--loss eagle`). The full history lives in
-   `results/draft-head-training.md` — committed, so the numbers ship with the repo.
+3. **The objective was the hidden lever — and it's now closed.** We trained
+   what the features *are* (MSE) but measured whether the target *agrees*
+   (argmax); the paper trains both at once (`--loss eagle`). CE compressed
+   the climb ~10× (0.480 @ e10 vs 0.426 @ e10 for MSE) yet hit the same
+   ceiling — best **0.490 @ e26**, 95% of the target's own 0.514
+   predictability. The wall is corpus + target ambiguity, not the head, the
+   loss, or training time. Full history: `results/draft-head-training.md`.

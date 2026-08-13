@@ -139,6 +139,38 @@ The failure points point to the fixes. Three levers, from most to least practica
 
 ---
 
+## The draft-head chapter — attacking the acceptance bet (in progress)
+
+Lever 2 above ("a draft trained to predict the target") is the next chapter of
+this repo — a tiny **draft head** that reads the target's own internal
+thoughts and predicts the target's next word (the EAGLE idea; see
+[`draft-head/`](../draft-head/README.md)). The chapter so far has produced the
+same shape of lesson as the main story, one level deeper — **the wall was
+never where it looked**:
+
+- **More data was the first real lever.** 500K → 3.0M tokens lifted agreement
+  0.376 → 0.485.
+- **More depth was not a lever.** A second decoder layer made the predicted
+  features measurably better, yet agreement barely moved.
+- **The objective was the hidden lever — and it is now closed.** We trained
+  the head on feature *shape* (MSE) but measured whether the target *agrees*
+  (argmax) — a mismatch that only shows up at saturation, exactly where we
+  ended up. Switching to the paper's actual loss (Smooth L1 + a token
+  cross-entropy term) compressed ~100 epochs of learning into 10... and
+  landed on the **same ceiling**: best agreement **0.490**, which is **95% of
+  the target's own ceiling** (the target itself only commits to a clear
+  winner on 51.4% of positions — the other half of the data has no winner
+  for any draft to agree on).
+
+**The plain-English moral:** the head was never the problem, the training time
+was never the problem, and the loss was only half the problem — the last mile
+is that ~half of real text has no single "right" next word for the target
+itself. The remaining question is whether a draft that agrees with the target
+49 times out of 100 wins in a real decode loop — that is the engine, and it is
+the next chapter.
+
+---
+
 ## A tiny glossary (for the non-technical reader)
 
 | Term | Meaning |
