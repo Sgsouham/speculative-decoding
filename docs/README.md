@@ -4,7 +4,7 @@ This folder is the *why* of the repo, written for readers who may not be
 machine-learning experts. The README gives the one-paragraph version; these
 documents go deeper.
 
-- **`learnings.md`** — the analysis in plain English (with analogies): how
+- **`learnings.md`** — the analysis (with analogies): how
   speculative decoding works, the three benchmark traps that nearly fooled me,
   the two conditions that must hold for the trick to pay off (and why both
   failed on this hardware), what would make it win, and a glossary. **Start here.**

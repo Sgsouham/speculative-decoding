@@ -1,4 +1,4 @@
-# Learnings & Analysis — why speculative decoding lost, in plain English
+# Learnings & Analysis — why speculative decoding lost
 
 *The story of this repo is a measurement. I set out to make text generation faster with
 a clever, well-known trick. I built it correctly, measured it honestly, and it didn't
@@ -198,7 +198,7 @@ at decode — for three independent reasons, only one of which is hardware.**
   **0.78× slower** — the fixed per-call overhead (the commute analogy, now
   living *inside* the draft) eats the win.
 
-**The three walls, in plain English:**
+**The three walls, simply put:**
 
 1. **The target's own ceiling.** The target only commits to a clear winner on
    ~51% of positions in real text. No draft — however well trained — can agree

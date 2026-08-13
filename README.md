@@ -94,7 +94,7 @@ The benchmark harness sweeps prompt length × draft length × temperature and wr
 
 | Document | What it is |
 |---|---|
-| [`docs/learnings.md`](docs/learnings.md) | The analysis in plain English — the idea, the three traps, the two broken bets, what would make it win, and a glossary. |
+| [`docs/learnings.md`](docs/learnings.md) | The analysis — the idea, the three traps, the two broken bets, what would make it win, and a glossary. |
 | [`docs/blockers.md`](docs/blockers.md) | Every bug I hit, in *symptom → root cause → fix → lesson* form, plus my debugging playbook. |
 | [`results/speculative-decoding.md`](results/speculative-decoding.md) | The complete 108-config benchmark table and how to read it. |
 | [`results/eagle-training.md`](results/eagle-training.md) | The draft-head (EAGLE) chapter: gate, training results, and run log. |
