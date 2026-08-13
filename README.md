@@ -99,20 +99,6 @@ The benchmark harness sweeps prompt length × draft length × temperature and wr
 | [`results/speculative-decoding.md`](results/speculative-decoding.md) | The complete 108-config benchmark table and how to read it. |
 | [`results/eagle-training.md`](results/eagle-training.md) | The draft-head (EAGLE) chapter: gate, training results, and run log. |
 
-## Training tracker — the draft-head chapter
-
-Latest first — newest experiment on top. Full per-epoch tables:
-[`results/eagle-training.md`](results/eagle-training.md).
-
-- **Objective probe** (`--loss eagle`, 1-layer, 30 epochs): **0.490** @ e26 —
-  the best head on disk, 95% of the target's own ceiling. CE compressed the
-  climb ~10× but hit the same wall — all three levers closed. Verdict:
-  BORDERLINE.
-- **2-layer capacity probe**: **0.474** @ epoch 40 (BORDERLINE). Depth ruled
-  out — features improved, agreement didn't.
-- **Data lever**: 500K → 3.0M tokens lifted the 1-layer MSE head from 0.376
-  to **0.485** @ epoch 96 (BORDERLINE, the previous best head).
-
 ## Layout
 
 ```
