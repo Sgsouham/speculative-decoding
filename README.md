@@ -114,5 +114,3 @@ Each folder has a short `README.md`; start with [`src/`](src/README.md) to read
 the code, [`tests/`](tests/README.md) to read the verification, and
 [`benchmarks/`](benchmarks/README.md) to reproduce the measurements.
 
-
-Again, not a complete repo, will add more details
