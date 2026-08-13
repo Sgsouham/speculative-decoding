@@ -11,8 +11,10 @@ documents go deeper.
 - **`blockers.md`** — every bug I hit, in *symptom → root cause → fix → lesson*
   form, plus my debugging playbook. Proof that "simple" 300-line algorithms
   still need real verification.
-- **`results.md`** — the complete 108-config benchmark table and how to read it
-  (the raw JSON data lives in `../results/`).
+- **`learnings.md`** also points to the measured outcomes, which live in
+  [`../results/`](../results/README.md): `speculative-decoding.md` (the full
+  108-config benchmark table) and `eagle-training.md` (the draft-head training
+  log).
 
 `internal/` holds private development notes (planning, session state) — it is
 gitignored and never part of the published story.

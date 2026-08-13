@@ -1,4 +1,4 @@
-"""M1 — model plumbing tests. GPU required (run inside WSL2 via `uv run pytest`)."""
+"""Model plumbing tests. GPU required (run inside WSL2 via `uv run pytest`)."""
 import pytest
 import torch
 from transformers import AutoTokenizer

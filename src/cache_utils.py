@@ -1,9 +1,8 @@
 """src/cache_utils.py — tiny shared helpers for the draft-head cache format.
 
-The draft-head scripts live in a hyphenated folder (`draft-head/`), which is
-not a valid Python import path, so anything they share lives here in `src/`
-(the importable package). This is the chunk-index parser for the feature-cache
-filenames written by draft-head/collect_features.py.
+This is the chunk-index parser for the feature-cache filenames written by
+src/collect_eagle_features.py, shared by the training script
+(src/train_eagle_head.py).
 """
 
 import re

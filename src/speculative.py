@@ -1,4 +1,4 @@
-"""Core vanilla speculative decoding loop (M2).
+"""Core vanilla speculative decoding loop.
 
 Algorithm (Leviathan et al. 2023 / Chen et al. 2023):
   1. Draft: the small model proposes k candidate tokens autoregressively

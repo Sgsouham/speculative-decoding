@@ -88,7 +88,7 @@ uv run python benchmarks/benchmark_speculative.py \
 ```
 
 The benchmark harness sweeps prompt length × draft length × temperature and writes
-`results/m3_sweep.json`; `--report` prints the markdown table.
+`results/speculative_sweep.json`; `--report` prints the markdown table.
 
 ## Learn more
 
@@ -96,12 +96,13 @@ The benchmark harness sweeps prompt length × draft length × temperature and wr
 |---|---|
 | [`docs/learnings.md`](docs/learnings.md) | The analysis in plain English — the idea, the three traps, the two broken bets, what would make it win, and a glossary. |
 | [`docs/blockers.md`](docs/blockers.md) | Every bug I hit, in *symptom → root cause → fix → lesson* form, plus my debugging playbook. |
-| [`docs/results.md`](docs/results.md) | The complete 108-config benchmark table and how to read it. |
+| [`results/speculative-decoding.md`](results/speculative-decoding.md) | The complete 108-config benchmark table and how to read it. |
+| [`results/eagle-training.md`](results/eagle-training.md) | The draft-head (EAGLE) chapter: gate, training results, and run log. |
 
 ## Training tracker — the draft-head chapter
 
 Latest first — newest experiment on top. Full per-epoch tables:
-[`results/draft-head-training.md`](results/draft-head-training.md).
+[`results/eagle-training.md`](results/eagle-training.md).
 
 - **Objective probe** (`--loss eagle`, 1-layer, 30 epochs): **0.490** @ e26 —
   the best head on disk, 95% of the target's own ceiling. CE compressed the
@@ -116,12 +117,11 @@ Latest first — newest experiment on top. Full per-epoch tables:
 
 ```
 config/        model catalog + benchmark sweep settings
-src/           the implementation (models, speculative loop)
+src/           the implementation (models, speculative loop, EAGLE head + training)
 tests/         correctness + equivalence tests
-benchmarks/    the M3 sweep harness + probes
-docs/          the story (learnings, blockers, results)
-results/       raw benchmark JSONs (gitignored)
-draft-head/    the next chapter: training an EAGLE-style draft head (in progress)
+benchmarks/    the benchmark sweep harness + probes
+docs/          the story (learnings, blockers)
+results/       the measured outcomes (speculative-decoding + eagle-training docs)
 ```
 
 Each folder has a short `README.md`; start with [`src/`](src/README.md) to read

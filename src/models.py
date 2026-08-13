@@ -1,4 +1,4 @@
-"""Model plumbing for speculative decoding (M1).
+"""Model plumbing for speculative decoding.
 
 - fp16/eval loaders via AutoModelForCausalLM (works for Qwen2.5 + Qwen3).
 - Shared tokenizer across draft/target (same 151,669-token Qwen vocab).
@@ -20,8 +20,8 @@ class ModelHandle:
 
     forward() caches past_key_values on the handle and records pending_logits
     (the last row of the output — the prediction of the next token); reset()
-    clears both. The cached path is what the M2 loop uses: draft runs k
-    autoregressive steps, the target runs one parallel verification pass over
+    clears both. The cached path is what the speculative loop uses: draft runs
+    k autoregressive steps, the target runs one parallel verification pass over
     the draft block.
 
     Contract: forward() and generate() are per-sequence paths — call reset()
@@ -39,6 +39,7 @@ class ModelHandle:
         """Clear this model's KV cache + pending logits (per-model semantics)."""
         self.past_key_values = None
         self.pending_logits = None
+        self.last_hidden_states = None
 
     def crop_cache(self, seq_len: int) -> None:
         """Truncate this handle's KV cache to the first seq_len positions.
@@ -64,20 +65,25 @@ class ModelHandle:
 
     # -- forward ---------------------------------------------------------
     @torch.no_grad()
-    def forward(self, input_ids: torch.Tensor, use_cache: bool = True):
+    def forward(self, input_ids: torch.Tensor, use_cache: bool = True,
+                capture_hidden: bool = False):
         """Forward with this handle's cached past_key_values; updates the cache.
 
         pending_logits is updated to the last row of the output (the prediction
-        of the token following the current sequence).
+        of the token following the current sequence). capture_hidden=True also
+        requests hidden states and stashes them on last_hidden_states        (None otherwise) — the EAGLE engine's seed-feature seam (plan §3). Default
+        False keeps the decode/benchmark paths byte-identical.
         """
         out = self.model(
             input_ids=input_ids,
             past_key_values=self.past_key_values,
             use_cache=use_cache,
+            output_hidden_states=capture_hidden,
         )
         self.past_key_values = out.past_key_values
         if out.logits is not None:
             self.pending_logits = out.logits[:, -1:, :]
+        self.last_hidden_states = out.hidden_states if capture_hidden else None
         return out
 
     # -- EAGLE feature capture (draft-head data pipeline) -------------------------
@@ -89,8 +95,8 @@ class ModelHandle:
         layer (the layer before the LM head): the "feature" the EAGLE draft
         head learns to predict (arXiv 2401.15077). Pure prefill with
         use_cache=False — deliberately does NOT touch this handle's KV cache
-        or pending_logits, so feature collection can never disturb the M1-M3
-        decode paths.
+        or pending_logits, so feature collection can never disturb the
+        decode/benchmark paths.
         """
         out = self.model(
             input_ids=input_ids,

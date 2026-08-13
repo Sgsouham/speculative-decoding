@@ -1,4 +1,4 @@
-"""M2 — core speculative decoding loop tests. GPU required (run inside WSL2)."""
+"""Core speculative decoding loop tests. GPU required (run inside WSL2)."""
 import pytest
 import torch
 
@@ -34,7 +34,7 @@ def _ids(tok, prompt, device):
 @requires_cuda
 @pytest.mark.parametrize("prompt", PROMPTS)
 def test_greedy_matches_target_only(pair, prompt):
-    """§6.1 — the M2 exit criterion: speculative == target-only greedy, token-identical."""
+    """§6.1 — the core-loop exit criterion: speculative == target-only greedy, token-identical."""
     draft, target, tok = pair
     ids = _ids(tok, prompt, target.device)
     sd, stats = speculative_decode(draft, target, ids, max_new_tokens=48, draft_length=4)

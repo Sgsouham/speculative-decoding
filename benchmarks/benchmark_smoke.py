@@ -1,6 +1,6 @@
-"""benchmark_smoke.py — quick decode-methodology probe (M3 prep, Aug 7).
+"""benchmark_smoke.py — quick decode-methodology probe (benchmark-sweep prep, Aug 7).
 
-Sanity-checks the timing discipline BEFORE building the full M3 harness:
+Sanity-checks the timing discipline BEFORE building the full sweep harness:
   - speculative vs target-only autoregressive decode through the SAME engines
     (identical timing path — plan §7 baseline requirement)
   - greedy output-equivalence gate (correctness first — suite convention §6.4)
@@ -8,7 +8,7 @@ Sanity-checks the timing discipline BEFORE building the full M3 harness:
   - peak VRAM via torch.cuda.max_memory_allocated()
 
 Scope: 3 (draft, target) pairs × 1 config each (greedy, k=4, 64 tokens).
-Full 36-config sweep belongs to the M3 harness.
+Full 36-config sweep belongs to the benchmark harness.
 
 --compile / --compile-mode: torch.compile BOTH engines before timing, so the
 spec-vs-AR comparison is compiled vs compiled (Aug 8 probe, analysis doc §9).

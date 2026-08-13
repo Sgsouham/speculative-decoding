@@ -1,4 +1,4 @@
-# M0 scaffold — Repo 02 speculative-decoding
+# scaffold — speculative-decoding
 # Full build plan: ../plan.md (§4 targets/workloads, §7 benchmark methodology)
 
 # Active selection — switch with one line (drop-in requirement, §2).
@@ -7,6 +7,15 @@
 model:
   draft: qwen2.5-0.5b     # active draft alias
   target: qwen2.5-1.5b    # active target alias
+
+# Draft-head (EAGLE) chapter — target + paths used by the feature-cache
+# pipeline (src/collect_eagle_features.py) and the head trainer
+# (src/train_eagle_head.py). The scripts default to these; any --flag overrides.
+draft_head:
+  model: qwen2.5-3b           # target alias whose hidden states the head learns to predict
+  cache: data/draft-head/wikitext2   # feature cache dir (written by collect_eagle_features.py)
+  out: data/draft-head        # head weights (head_fc.pt / head_layers.pt) + train_report.json
+  logdir: data/draft-head/runs        # TensorBoard log root
 
 runtime:
   dtype: fp16             # both models in fp16 (12 GB VRAM budget; Qwen3-4B pair ~9 GB)

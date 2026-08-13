@@ -1,13 +1,13 @@
 # Results — the full benchmark table
 
-*The complete measurement behind the verdict in [`learnings.md`](learnings.md):
+*The complete measurement behind the verdict in [`../docs/learnings.md`](../docs/learnings.md):
 **108 configurations across 6 model pairs, and none of them beat plain decoding.**
 Speedups range from 0.22× to 0.65× — speculative decoding was always slower.*
 
-Raw data lives in `results/m3_sweep.json`. Regenerate this table with:
+Raw data lives in `speculative_sweep.json` (same folder). Regenerate this table with:
 
 ```bash
-uv run python benchmarks/benchmark_speculative.py --report results/m3_sweep.json
+uv run python benchmarks/benchmark_speculative.py --report results/speculative_sweep.json
 ```
 
 ## How it was measured (the honest way)
@@ -16,11 +16,11 @@ uv run python benchmarks/benchmark_speculative.py --report results/m3_sweep.json
   *same* code path (no shortcuts on either side).
 - **The text is real:** prompts were six different natural texts (history, biology, a
   story, an algorithm problem, music, geometry), joined and cut to length — never a
-  repeated paragraph (see the traps in [`learnings.md`](learnings.md)).
+  repeated paragraph (see the traps in [`../docs/learnings.md`](../docs/learnings.md)).
 - **Correctness gate first:** for greedy configs, speculative output had to match plain
   output token-for-token before any timing was recorded. 3 of 36 greedy configs hit a
-  documented fp16 tie (see [`blockers.md`](blockers.md) B11) and are marked
-  `greedy_near_tie` — their timing is still valid.
+  documented fp16 tie (see [`../docs/blockers.md`](../docs/blockers.md) — the
+  floating-point-tie entry) and are marked `greedy_near_tie` — their timing is still valid.
 - **Timing:** 1 warm-up, 3 timed runs, median wall-clock with GPU sync. 64 new tokens
   per config.
 - **Hardware:** RTX 3060 12 GB, WSL2, PyTorch 2.13, fp16.

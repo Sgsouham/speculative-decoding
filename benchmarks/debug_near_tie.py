@@ -1,7 +1,8 @@
-"""debug_near_tie.py — diagnose the M3 0.5B->3B greedy divergence at token 149.
+"""debug_near_tie.py — diagnose the 0.5B->3B greedy divergence at token 149.
 
 The greedy gate crashed (spec != AR, same engines) at generated token 21 on the
-diverse-concat prompt at len 128. Two hypotheses (plan §8 / B9):
+diverse-concat prompt at len 128. Two hypotheses (plan §8 / the rollback-length
+bug):
   H1 fp16 near-tie: the verify pass computes k+1 logits in one parallel forward,
      AR one at a time — different accumulation order -> ~1 ULP differences; if
      the top-2 gap at that position is tiny, argmax flips.
@@ -104,7 +105,7 @@ def main():
         if gap_at is not None and gap_at < 0.1:
             print("  VERDICT: near-tie (fp16 ULP reordering flips argmax) — documented plan §8 risk")
         else:
-            print("  VERDICT: gap is LARGE — NOT a near-tie; treat as a real alignment bug (B9-style)")
+            print("  VERDICT: gap is LARGE — NOT a near-tie; treat as a real alignment bug (rollback-style)")
     else:
         print("  no divergence — pass")
 

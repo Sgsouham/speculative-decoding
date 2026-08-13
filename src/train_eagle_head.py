@@ -1,6 +1,6 @@
-"""train_head.py — train the EAGLE-1-style draft head.
+"""train_eagle_head.py — train the EAGLE-1-style draft head.
 
-Consumes the feature cache produced by draft-head/collect_features.py
+Consumes the feature cache produced by src/collect_eagle_features.py
 (data/draft-head/wikitext2/): fp16 second-to-top-layer features + token ids.
 
 Head (arXiv 2401.15077 §3.2):
@@ -26,8 +26,9 @@ Gate metric (plan §4 step 4a): GREEDY AGREEMENT = the fraction of positions
 where the head's top-1 token equals the target's own top-1 token, measured
 on a held-out tail of the cache. This is the acceptance-relevant statistic
 for greedy speculative decoding — in greedy, a draft token is accepted iff
-it is the target's argmax. Vanilla baseline: ~0.35 (M3, real text). If the
-head is not clearly above that, STOP and reconsider (plan §4 gate).
+it is the target's argmax. Vanilla baseline: ~0.35 (the benchmark sweep, real
+text). If the head is not clearly above that, STOP and reconsider (plan §4
+gate).
 
 Training precision: head params fp32 (small, ~50M — fp32 costs nothing and
 avoids fp16 instability), cache features fp16 upcast per batch, MSE in fp32.
@@ -39,10 +40,10 @@ Outputs (--out, default data/draft-head/):
     train_report.json per-epoch val metrics + gate verdict
 
 Usage (WSL2):
-    HF_HOME=/mnt/d/projects/hf-cache uv run python draft-head/train_head.py --epochs 5
-    HF_HOME=/mnt/d/projects/hf-cache uv run python draft-head/train_head.py --resume --epochs 5
-    HF_HOME=/mnt/d/projects/hf-cache uv run python draft-head/train_head.py --loss eagle --epochs 10  # paper loss: Smooth L1 + 0.1*CE
-    HF_HOME=/mnt/d/projects/hf-cache uv run python draft-head/train_head.py --self-test
+    HF_HOME=/mnt/d/projects/hf-cache uv run python src/train_eagle_head.py --epochs 5
+    HF_HOME=/mnt/d/projects/hf-cache uv run python src/train_eagle_head.py --resume --epochs 5
+    HF_HOME=/mnt/d/projects/hf-cache uv run python src/train_eagle_head.py --loss eagle --epochs 10  # paper loss: Smooth L1 + 0.1*CE
+    HF_HOME=/mnt/d/projects/hf-cache uv run python src/train_eagle_head.py --self-test
 
 --resume: continue from the BEST saved checkpoint (head_fc.pt /
 head_layers.pt) and the epoch numbering in train_report.json, instead of
@@ -63,7 +64,6 @@ localhost).
 from __future__ import annotations
 
 import argparse
-import copy
 import json
 import random
 import sys
@@ -71,7 +71,6 @@ import time
 from pathlib import Path
 
 import torch
-import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.tensorboard import SummaryWriter
 
@@ -80,6 +79,7 @@ sys.path.insert(0, str(REPO_ROOT))
 
 from src.cache_utils import chunk_idx as _chunk_idx  # noqa: E402
 from src.config import load_config, resolve_model_id  # noqa: E402
+from src.eagle_head import EagleDraftHead, run_top_layer, run_top_layer_grad  # noqa: E402
 from src.models import load_model  # noqa: E402
 
 
@@ -93,22 +93,17 @@ def make_pairs(feats: torch.Tensor, toks: torch.Tensor):
         input  = (f_i, t_{i+1})   -> fused [f_i; embed(t_{i+1})]
         target = f_{i+1}          (MSE)  and  t_{i+1}  (top-1 accuracy ref)
     The tail position (n-1) has no next token and is dropped — matching the
-    cache design (collect_features.py drops one position per block).
+    cache design (collect_eagle_features.py drops one position per block).
     """
     return feats[:-1], toks[1:], feats[1:], toks[1:]
-
-
-def causal_mask(seq: int, device, dtype) -> torch.Tensor:
-    """Additive 4-D causal mask [1,1,S,S] (0 = attend, -inf = blocked)."""
-    mask = torch.full((1, 1, seq, seq), float("-inf"), device=device, dtype=dtype)
-    return torch.triu(mask, diagonal=1)
 
 
 def load_chunks(cache_dir: Path, val_frac: float, block_len: int = 1024):
     """(train_blocks, val_blocks, total_tokens).
 
-    The cache holds FLAT ~100K-token chunks (collect_features.py accumulates
-    many 1024-token blocks into one file), but the head's causal attention is
+    The cache holds FLAT ~100K-token chunks (collect_eagle_features.py
+    accumulates many 1024-token blocks into one file), but the head's causal
+    attention is
     O(block_len²) — a whole chunk as one sequence OOMs instantly (Aug 10:
     "Tried to allocate 37 GiB" on the 50K-token val slice). So re-block every
     chunk into block_len-token sequences here. The original block boundaries
@@ -121,7 +116,7 @@ def load_chunks(cache_dir: Path, val_frac: float, block_len: int = 1024):
     """
     paths = sorted(cache_dir.glob("chunk_*.features.pt"), key=_chunk_idx)
     if not paths:
-        raise SystemExit(f"no chunks in {cache_dir} — run draft-head/collect_features.py first")
+        raise SystemExit(f"no chunks in {cache_dir} — run src/collect_eagle_features.py first")
     blocks = []
     for p in paths:
         feats = torch.load(p, weights_only=True)
@@ -134,7 +129,7 @@ def load_chunks(cache_dir: Path, val_frac: float, block_len: int = 1024):
             blocks.append((feats[s:e], toks[s:e]))
     if len(blocks) < 2:
         raise SystemExit(f"cache too small for a train/val split ({len(blocks)} block(s)) — "
-                         f"run collect_features.py with a bigger budget first")
+                         f"run collect_eagle_features.py with a bigger budget first")
     total = sum(f.shape[0] for f, _ in blocks)
     val_n = max(1, min(int(total * val_frac) // block_len, len(blocks) - 1))
     val_blocks = blocks[-val_n:]
@@ -145,74 +140,9 @@ def load_chunks(cache_dir: Path, val_frac: float, block_len: int = 1024):
 # --------------------------------------------------------------------------
 # Model wiring
 # --------------------------------------------------------------------------
-class EagleDraftHead(nn.Module):
-    """FC(2h -> h) + N decoder layers (copies of the target's TOP N layers).
-
-    The target's embedding / top layers / norm / LM head are frozen and used
-    externally by the training loop. FC is identity-initialized on the
-    feature half so the head starts as the identity feature map; the decoder
-    layers are warm-started from the target's own weights (EAGLE's trick), so
-    a 2-layer head is a deeper copy of the target's final computation rather
-    than random capacity.
-    """
-
-    def __init__(self, hidden: int, decoder_layers: list[nn.Module], rotary_emb: nn.Module):
-        super().__init__()
-        self.fc = nn.Linear(2 * hidden, hidden)
-        with torch.no_grad():
-            self.fc.weight.zero_()
-            self.fc.weight[:, :hidden] = torch.eye(hidden)
-            self.fc.bias.zero_()
-        self.layers = nn.ModuleList(copy.deepcopy(l).float() for l in decoder_layers)  # fp32
-        self.rotary_emb = rotary_emb
-        self.hidden = hidden
-
-    def forward(self, fused: torch.Tensor) -> torch.Tensor:
-        """fused [B, S, 2h] -> predicted next features [B, S, h] (f̂_{i+1})."""
-        x = self.fc(fused)
-        b, s, _ = x.shape
-        pos = torch.arange(s, device=x.device).unsqueeze(0).expand(b, -1)
-        cos, sin = self.rotary_emb(x, pos)
-        mask = causal_mask(s, x.device, x.dtype)
-        for layer in self.layers:
-            out = layer(
-                x,
-                attention_mask=mask,
-                position_ids=pos,
-                position_embeddings=(cos, sin),
-                use_cache=False,
-            )
-            x = out[0] if isinstance(out, tuple) else out
-        return x
-
-
-def run_top_layer_grad(model, x: torch.Tensor, device) -> torch.Tensor:
-    """Decode path (frozen top layer + final norm) for the CE term of
-    --loss eagle — the same shared last mile the eval gate uses, but
-    grad-enabled so the CE gradient flows through it to the head's predicted
-    feature. The target's params are requires_grad=False (frozen in main), so
-    no gradients are stored for them. Casts x to the model's dtype (fp16 in
-    production; fp32 in the CPU self-test)."""
-    dt = next(model.model.layers[-1].parameters()).dtype
-    b, s, _ = x.shape
-    pos = torch.arange(s, device=device).unsqueeze(0).expand(b, -1)
-    cos, sin = model.model.rotary_emb(x.to(dt), pos)
-    mask = causal_mask(s, device, dt)
-    out = model.model.layers[-1](
-        x.to(dt), attention_mask=mask, position_ids=pos,
-        position_embeddings=(cos, sin), use_cache=False,
-    )
-    if isinstance(out, tuple):
-        out = out[0]
-    return model.model.norm(out)
-
-
-@torch.no_grad()
-def run_top_layer(model, x: torch.Tensor, device) -> torch.Tensor:
-    """no-grad wrapper of run_top_layer_grad for eval/precompute (identical
-    decode path; the self-test's synthetic fp32 model works too, since the
-    dtype cast is internal)."""
-    return run_top_layer_grad(model, x, device)
+# The head + shared decode path (EagleDraftHead, run_top_layer(_grad),
+# causal_mask) live in src/eagle_head.py — the decode engine and tests import
+# them from there, so this training script and the engine share one definition.
 
 
 def eagle_loss(head, fused, tgt_f, labels, model, device, ce_weight: float = 0.1):
@@ -339,7 +269,7 @@ def run_self_test() -> None:
         "best": {"epoch": 42, "greedy_agreement": 0.474, "target_top1_acc": 0.514},
         "gate": {"verdict": "BORDERLINE — above baseline but thin"}}
     with _tmp.TemporaryDirectory() as td:
-        fake_log = Path(td) / "draft-head-training.md"
+        fake_log = Path(td) / "eagle-training.md"
         write_results_log(fake, 0, log_path=fake_log)
         md = fake_log.read_text(encoding="utf-8")
         assert "| 41 |" in md and "| 42 |" in md and "0.474" in md
@@ -356,14 +286,14 @@ def run_self_test() -> None:
 # --------------------------------------------------------------------------
 def write_results_log(report: dict, epochs_before: int,
                       log_path: Path | None = None) -> None:
-    """Append a run section to the COMMITTABLE log results/draft-head-training.md.
+    """Append a run section to the COMMITTABLE log results/eagle-training.md.
 
     The heavy per-epoch JSON lives under data/ (gitignored — GBs of tensors).
     This markdown is the small, human-readable, tracked record so the training
     story ships to GitHub without the cache. Append-only; each resume appends
     only ITS OWN new epochs (report accumulates across runs). log_path is
-    injectable for the self-test (defaults to results/draft-head-training.md)."""
-    log = log_path or (REPO_ROOT / "results" / "draft-head-training.md")
+    injectable for the self-test (defaults to results/eagle-training.md)."""
+    log = log_path or (REPO_ROOT / "results" / "eagle-training.md")
     log.parent.mkdir(parents=True, exist_ok=True)
     es = report.get("epochs", [])
     new_es = es[epochs_before:]
@@ -420,16 +350,20 @@ def main() -> None:
     ap.add_argument("--n-layers", type=int, default=1,
                     help="decoder layers in the head, warm-copied from the target's top N "
                          "(default 1; 2 = the Aug 11 capacity probe)")
-    ap.add_argument("--cache", default="data/draft-head/wikitext2", help="feature cache dir (from collect_features.py)")
-    ap.add_argument("--out", default="data/draft-head", help="output dir for head weights + report")
-    ap.add_argument("--model", default="qwen2.5-3b", help="target alias in config/default.yaml")
+    dh = load_config().get("draft_head", {})  # config/default.yaml → CLI defaults
+    ap.add_argument("--cache", default=dh.get("cache", "data/draft-head/wikitext2"),
+                    help="feature cache dir (from collect_eagle_features.py)")
+    ap.add_argument("--out", default=dh.get("out", "data/draft-head"),
+                    help="output dir for head weights + report")
+    ap.add_argument("--model", default=dh.get("model", "qwen2.5-3b"),
+                    help="target alias in config/default.yaml")
     ap.add_argument("--device", default="cuda", choices=["cuda", "cpu"])
     ap.add_argument("--epochs", type=int, default=5)
     ap.add_argument("--lr", type=float, default=5e-4, help="AdamW learning rate")
     ap.add_argument("--batch-blocks", type=int, default=4,
                     help="gradient accumulation over N blocks (effective batch ~N*1022 pairs)")
     ap.add_argument("--val-frac", type=float, default=0.1, help="held-out tail of the cache")
-    ap.add_argument("--logdir", default="data/draft-head/runs",
+    ap.add_argument("--logdir", default=dh.get("logdir", "data/draft-head/runs"),
                     help="TensorBoard log root (each run gets its own subdir; resume reuses it)")
     ap.add_argument("--seed", type=int, default=42)
     ap.add_argument("--resume", action="store_true",
@@ -647,9 +581,9 @@ def main() -> None:
         writer.add_scalar("val/mse", metrics["val_mse"], epoch)
         writer.add_scalar("val/top1_acc", metrics["top1_acc"], epoch)
         writer.add_scalar("val/greedy_agreement", metrics["greedy_agreement"], epoch)
-        # incremental report write — crash-safe (M3 lesson): the on-disk
-        # report always reflects every completed epoch, so a mid-resume crash
-        # never loses epoch history (checkpoint + report stay in lockstep).
+    # incremental report write — crash-safe (the benchmark-sweep lesson): the
+    # on-disk report always reflects every completed epoch, so a mid-resume
+    # crash never loses epoch history (checkpoint + report stay in lockstep).
         (out_dir / "train_report.json").write_text(
             json.dumps(report, indent=2), encoding="utf-8")
 

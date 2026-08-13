@@ -23,7 +23,7 @@ uv run pytest tests/ -q
 ```
 
 > Note on strictness: these tests assert exact token equality. Exact logit ties
-> can occasionally flip a token between code paths (fp16 rounding — see
-> [`docs/blockers.md`](../docs/blockers.md) B11); the benchmark harness handles
-> that case explicitly, while this suite stays strict because the default model
-> pair has never hit one.
+> can occasionally flip a token between code paths (fp16 rounding — see the
+> floating-point-tie entry in [`docs/blockers.md`](../docs/blockers.md)); the
+> benchmark harness handles that case explicitly, while this suite stays strict
+> because the default model pair has never hit one.

@@ -1,4 +1,4 @@
-"""benchmark_speculative.py — M3: the 36-config sweep harness (plan §7).
+"""benchmark_speculative.py — the 36-config benchmark sweep harness (plan §7).
 
 Measures speculative vs target-only autoregressive decode through the SAME
 engines (identical timing path — no `generate()` shortcut on either side) over:
@@ -17,7 +17,7 @@ Methodology (inherited from benchmark_smoke.py, the validated probe):
   - greedy correctness gate FIRST: spec == AR token-identical; failures crash
     loudly (numbers are never reported before they're verified, plan §6.4).
     Exception: a divergence at an fp16 near-tie (top1-top2 gap within the 4-ULP
-    bound, B5) is the documented plan §8 risk — recorded as gate=greedy_near_tie
+    bound) is the documented plan §8 risk — recorded as gate=greedy_near_tie
     and timed anyway (a 1-ULP reordering in the verify path flips a tied argmax;
     the output is equivalent within fp16 tie noise). First seen on 0.5B→3B
     (Aug 9, debug_near_tie.py: both HF oracles agreed with AR at the tie).
@@ -38,7 +38,7 @@ The greedy gate doubles as the end-to-end compiled-correctness check;
 compile-mode failures are recorded as findings (status), never swallowed.
 
 --report <json>: render a markdown summary table from an existing results file
-(the data behind docs/results.md) without touching the GPU.
+(the data behind results/speculative-decoding.md) without touching the GPU.
 
 Usage (WSL2):
   HF_HOME=/mnt/d/projects/hf-cache HF_HUB_OFFLINE=1 uv run python \
@@ -92,7 +92,7 @@ def ar_logit_gap(target: ModelHandle, prompt, pos: int) -> tuple[float, float] |
 
     Replays the AR decode up to `pos` (the position that PREDICTS output token
     `pos`) and reports how close the top-2 logits were. If the gap is within the
-    fp16 4-ULP bound (B5), a 1-ULP reordering in the parallel verify path can
+    fp16 4-ULP bound, a 1-ULP reordering in the parallel verify path can
     legitimately flip the argmax — the documented plan §8 near-tie risk. Returns
     None if `pos` is outside the decode range.
     """
@@ -162,7 +162,7 @@ def bench_config(draft: ModelHandle, target: ModelHandle, tokenizer, args,
                 equiv, gate = True, "greedy_exact"
             else:
                 # plan §6.4: a divergence at an fp16 near-tie (top1-top2 gap
-                # within the 4-ULP bound, B5) is a documented risk, not a bug —
+                # within the 4-ULP bound) is a documented risk, not a bug —
                 # the verify path's parallel forward reorders fp16 accumulation
                 # and flips a tied argmax. Record it as a finding and keep
                 # timing (output is equivalent within fp16 tie noise). A LARGE
@@ -325,12 +325,12 @@ def render_markdown(results: list[dict], meta: dict) -> str:
         for r in failed:
             lines.append(f"- `{r['key']}` — {r['status']}")
     lines.append("")
-    lines.append(f"*{len(rows)} configs × pairs from {meta.get('harness', 'M3 sweep')}*")
+    lines.append(f"*{len(rows)} configs × pairs from {meta.get('harness', 'the benchmark sweep')}*")
     return "\n".join(lines)
 
 
 def main():
-    ap = argparse.ArgumentParser(description="M3 full 36-config sweep harness (plan §7)")
+    ap = argparse.ArgumentParser(description="full 36-config benchmark sweep harness (plan §7)")
     ap.add_argument("--pairs", default=None,
                     help="comma-separated draft:target alias pairs, e.g. "
                          "qwen2.5-0.5b:qwen3-4b (default: all 6 SMOKE_PAIRS)")
@@ -363,7 +363,7 @@ def main():
                          "known to error on the raw HF DynamicCache path (probe_compile.py, Aug 8).")
     ap.add_argument("--no-resume", action="store_true",
                     help="ignore configs already recorded in --out (default: resume)")
-    ap.add_argument("--out", default="results/m3_sweep.json")
+    ap.add_argument("--out", default="results/speculative_sweep.json")
     ap.add_argument("--report", default=None, metavar="JSON",
                     help="render a markdown summary table from an existing results file and exit")
     args = ap.parse_args()
@@ -400,7 +400,7 @@ def main():
     cfg = load_config()
     out_path = Path(args.out)
     meta = {
-        "harness": "benchmarks/benchmark_speculative.py (M3, plan §7)",
+        "harness": "benchmarks/benchmark_speculative.py (benchmark sweep, plan §7)",
         "engine": "src/speculative.py (hand-rolled)",
         "dtype": "fp16",
         "prompt_mode": args.prompt_mode,
@@ -415,7 +415,7 @@ def main():
         "env": {"USE_HUB_KERNELS": os.environ.get("USE_HUB_KERNELS", "unset")},
     }
     n_configs = len(pairs) * len(args.prompt_lens) * len(args.ks) * len(args.temps) * len(prompts)
-    print(f"M3 sweep: pairs={len(pairs)} configs/pair={len(args.prompt_lens) * len(args.ks) * len(args.temps) * len(prompts)} "
+    print(f"benchmark sweep: pairs={len(pairs)} configs/pair={len(args.prompt_lens) * len(args.ks) * len(args.temps) * len(prompts)} "
           f"total={n_configs} max_new={args.max_new} compile={args.compile_mode if args.compile else 'eager'} "
           f"prompts={[n for _, n in prompts]}")
 

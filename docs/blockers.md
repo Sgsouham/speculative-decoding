@@ -9,9 +9,9 @@ against an independent reference.*
 
 ---
 
-## M0 — Environment
+## Environment
 
-### B7 · The model IDs I remembered don't exist ✅
+### The model IDs I remembered don't exist ✅
 - **Symptom:** `Repository Not Found` for `Qwen/Qwen3-0.6B-Instruct`.
 - **Root cause:** Qwen3 dropped the `-Instruct` suffix — chat models are just
   `Qwen/Qwen3-0.6B` / `Qwen/Qwen3-4B` (only Qwen2.5 keeps `-Instruct`).
@@ -21,9 +21,9 @@ against an independent reference.*
 
 ---
 
-## M1 — Model plumbing
+## Model plumbing
 
-### B5 · Floating-point drift between two valid code paths ✅
+### Floating-point drift between two valid code paths ✅
 - **Symptom:** step-by-step cached decoding and one-shot decoding disagreed on logits
   by up to 0.047 — on 60% of values.
 - **Root cause:** fp16 (half-precision) rounding. Running the same math in a different
@@ -35,9 +35,9 @@ against an independent reference.*
 
 ---
 
-## M2 — The core loop
+## The core loop
 
-### B1 · A library function silently returned `None` ✅
+### A library function silently returned `None` ✅
 - **Symptom:** the KV cache (running memory) became `None` after a rollback, and every
   later step recomputed from empty — wrong output everywhere.
 - **Root cause:** transformers 5.x refactored the cache API: `crop()` now **mutates in
@@ -46,7 +46,7 @@ against an independent reference.*
 - **Lesson:** read the library's actual source instead of assuming the old API.
   transformers 5.x is a moving target — the "API drift is real" warning was right.
 
-### B2 & B3 · One-element tensors corrupted the model ✅
+### One-element tensors corrupted the model ✅
 - **Symptom:** `RuntimeError: tensor a (14) must match tensor b (64)` inside the
   rotary-embedding math — on BOTH the correction path and the bonus path.
 - **Root cause:** indexing `tensor[0, i]` collapses the shape to 1-D. A 1-D tensor
@@ -56,7 +56,7 @@ against an independent reference.*
 - **Lesson:** when feeding tensors to a model, always know the exact rank. `[i]`,
   `[:, i]`, and `[:, i:i+1]` are different shapes. Print `.shape` when in doubt.
 
-### B4 · The "greedy" reference wasn't greedy ✅
+### The "greedy" reference wasn't greedy ✅
 - **Symptom:** my hand-rolled decoder matched Hugging Face's for 10 tokens, then
   picked a *different word* at position 10 even though the raw scores had a clear
   winner. Separately, my own decoder produced a degenerate repetition loop while HF
@@ -71,7 +71,7 @@ against an independent reference.*
   conditioning on wrong/truncated context. Comparing against an independent
   implementation surfaced a discrepancy my self-consistent tests could never see.
 
-### B8 · A throwaway script collided with the wrapper ✅
+### A throwaway script collided with the wrapper ✅
 - **Symptom:** `got multiple values for keyword argument 'do_sample'`.
 - **Root cause:** my debug script passed `do_sample=False` while the wrapper
   hardcodes it.
@@ -79,7 +79,7 @@ against an independent reference.*
 - **Lesson:** debug scripts and library wrappers can collide; keep the wrapper's API
   surface explicit.
 
-### B9 · A rollback used the wrong length and silently dropped history ✅
+### A rollback used the wrong length and silently dropped history ✅
 - **Symptom:** after the rope fixes, all greedy tests failed with
   `speculative != autoregressive` — the speculative decoder ran cleanly but produced
   *different tokens* than the reference on the same engine.
@@ -94,13 +94,14 @@ against an independent reference.*
 - **Lesson:** off-by-N bugs hide until multi-iteration paths run. When a rollback or
   truncation is involved, the length must be the **current** sequence length, never a
   constant captured at init. And: two paths on the same engine disagreeing is *always* a
-  state-alignment bug, never floating-point noise (see B11 for the one exception).
+  state-alignment bug, never floating-point noise (see the floating-point-tie
+  entry below for the one exception).
 
 ---
 
-## M3 — Benchmarking honestly
+## Benchmarking honestly
 
-### B11 · The greedy gate crashed on a floating-point tie ✅
+### The greedy gate crashed on a floating-point tie ✅
 - **Symptom:** the benchmark crashed: speculative ≠ autoregressive at one output
   position, with 24 tokens diverging downstream.
 - **Root cause:** an **exact tie** in fp16 — two candidate words scored *exactly* the
@@ -113,7 +114,7 @@ against an independent reference.*
 - **Fix:** the benchmark gate now checks the margin at the first divergence against a
   4-ULP tolerance. Within tolerance → record the row as `near-tie` (with the evidence)
   and keep the timing. A real, large-margin divergence still crashes loudly.
-- **Lesson:** B9's "same engine always means a state bug" has a documented exception:
+- **Lesson:** the rollback bug's "same engine always means a state bug" has a documented exception:
   **exact ties can legitimately flip across execution orders.** Before chasing a state
   bug, check the top-2 margin at the first divergence. Also: the number of divergent
   tokens is NOT the severity signal — the first margin is.
@@ -132,7 +133,8 @@ against an independent reference.*
    reproduce a one-shot forward's logits. It proved the cache machinery correct,
    narrowing bugs to input shapes and decode policy.
 3. **Compare against an independent implementation.** Hand-rolled vs Hugging Face
-   `generate()` surfaced B4 — a discrepancy our self-consistent tests could never see
+   `generate()` surfaced the non-greedy reference — a discrepancy our
+   self-consistent tests could never see
    (both paths agreed perfectly while BOTH were wrong relative to HF's actual policy).
 4. **Read the library source.** `grep` the actual implementation; it settled API
    questions in seconds.

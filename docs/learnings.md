@@ -114,8 +114,9 @@ wasted work — the apprentice chopped vegetables the chef threw away.
 The right engineering answer on this hardware was therefore to **not use it** — and to
 write down exactly why, which is what this repo is.
 
-For the numbers, see [`results.md`](results.md). For every bug I hit along the way, see
-[`blockers.md`](blockers.md).
+For the numbers, see
+[`results/speculative-decoding.md`](../results/speculative-decoding.md). For
+every bug I hit along the way, see [`blockers.md`](blockers.md).
 
 ---
 
@@ -144,9 +145,9 @@ The failure points point to the fixes. Three levers, from most to least practica
 Lever 2 above ("a draft trained to predict the target") is the next chapter of
 this repo — a tiny **draft head** that reads the target's own internal
 thoughts and predicts the target's next word (the EAGLE idea; see
-[`draft-head/`](../draft-head/README.md)). The chapter so far has produced the
-same shape of lesson as the main story, one level deeper — **the wall was
-never where it looked**:
+[`results/eagle-training.md`](../results/eagle-training.md)). The chapter so
+far has produced the same shape of lesson as the main story, one level deeper
+— **the wall was never where it looked**:
 
 - **More data was the first real lever.** 500K → 3.0M tokens lifted agreement
   0.376 → 0.485.
@@ -219,7 +220,7 @@ at decode — for three independent reasons, only one of which is hardware.**
 
 ### What pair *would* have worked (even if it didn't fit our hardware)
 
-Our M3 data holds the surprise: **acceptance was never the binding constraint
+Our benchmark-sweep data holds the surprise: **acceptance was never the binding constraint
 at our scale.** Every same-family pair accepted ~2 of every 4 drafted tokens
 (τ ≈ 2, acceptance 49–65%) — a genuinely good draft — and *still* lost
 (x0.30–0.65), because the machinery's fixed cost exceeded the target's own
@@ -273,7 +274,7 @@ First, the two levels pair differently:
 |---|---|---|
 | Llama-3.2-1B | Llama-3.1-8B | The vLLM/Hugging Face canonical example; the smallest config where the economics start to work (~1.4–1.6× measured in the wild). |
 | Llama-3.2-1B / 3B | Llama-3.1-70B | The community favorite — same tokenizer, huge target; the real 2–3× lives here. Also Hugging Face's official *assisted generation* example. |
-| Qwen2.5-0.5B | Qwen2.5-32B / 72B | The direct extrapolation of *our own M3 pairs* — the same family we already measured accepting at 52–65%, scaled up 10–20×. The safest bet given our data. |
+| Qwen2.5-0.5B | Qwen2.5-32B / 72B | The direct extrapolation of *our own benchmark pairs* — the same family we already measured accepting at 52–65%, scaled up 10–20×. The safest bet given our data. |
 | Qwen2.5-Coder-1.5B | Qwen2.5-Coder-32B | Same-family coder pair that community members report actually winning on consumer hardware. |
 
 ### EAGLE targets that are documented winners
@@ -291,7 +292,7 @@ First, the two levels pair differently:
 
 Our own experiments *prove* the selection rule once read correctly:
 
-1. **Acceptance was never the binding constraint.** Every same-family M3 pair
+1. **Acceptance was never the binding constraint.** Every same-family benchmark pair
    accepted ~2 of 4 drafts (τ ≈ 2) and still lost at 1.5–3B scale — the fixed
    overhead (~90 ms per cycle) exceeded the target's own 29–36 ms per token.
 2. **The rule is pure economics: the target's forward pass must dwarf the

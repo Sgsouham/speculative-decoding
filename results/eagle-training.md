@@ -1,8 +1,83 @@
-# draft-head — training results (committable log)
+# Draft-head (EAGLE) training — the trained-draft chapter
+
+The main story measured *why* vanilla speculative decoding loses on this
+hardware: the draft disagrees with the target on ~2 of every 3 guesses, so most
+of its cheap work gets thrown away. This chapter tries the obvious fix — **train
+the draft to predict the target** — with an EAGLE-style draft head
+(arXiv 2401.15077): a small network that reads the target's own hidden features
+and predicts the next token the target would pick. The architecture lives in
+[`src/eagle_head.py`](../src/eagle_head.py); this document is the gate and the
+results.
+
+## The gate
+
+The head is judged on **`greedy_agreement`** — the fraction of positions where
+the head's top-1 token equals the target's top-1 token. That is the number that
+decides whether a trained draft is good enough to actually speed up decoding
+(the same acceptance problem the main story measured, now attacked at the
+source).
+
+| vanilla baseline | PASS | BORDERLINE | best so far |
+|---|---|---|---|
+| ~0.35 | ≥ 0.50 | 0.42–0.50 | **0.490** (1-layer CE, e26) — all levers explored; build the engine |
+
+## What the training taught us
+
+Three experiments, one pattern — the same shape of lesson as the main story,
+one level further in:
+
+1. **Data was the first real lever.** 500K → 3.0M tokens lifted agreement
+   0.376 → 0.485 while `val_mse` kept falling.
+2. **Depth was not a lever.** The 2-layer head (163M params) made features
+   measurably better (`val_mse` lower, faster) but agreement barely moved.
+   Features saturate long before argmax agreement does: agreement is a
+   knife-edge comparison in a 151,936-way space, and the corpus itself is only
+   ~51% predictable for the target (`target_top1_acc` = 0.514) — so part of the
+   wall is irreducible.
+3. **The objective was the hidden lever — and it's now closed.** We trained
+   what the features *are* (MSE) but measured whether the target *agrees*
+   (argmax); the paper trains both at once (`--loss eagle`). CE compressed
+   the climb ~10× (0.480 @ e10 vs 0.426 @ e10 for MSE) yet hit the same
+   ceiling — best **0.490 @ e26**, 95% of the target's own 0.514
+   predictability. The wall is corpus + target ambiguity, not the head, the
+   loss, or training time.
+
+## The scripts
+
+- **`src/collect_eagle_features.py`** — runs the target model over WikiText-2
+  and caches its hidden states (the "features" the head learns from).
+  Resumable; writes ~100K-token chunk files to the cache dir.
+  ```bash
+  HF_HOME=/path/to/hf-cache uv run python src/collect_eagle_features.py --max-tokens 500000
+  ```
+  Omit `--max-tokens` to process the whole corpus (~3M tokens).
+
+- **`src/train_eagle_head.py`** — trains the head (a linear feature map + N
+  decoder layers, warm-started from the target's own top layers) on the cached
+  features to predict the target's next token. Writes weights, a JSON report
+  (rewritten after every epoch — crash-safe), TensorBoard events, and appends
+  each completed run's section to THIS document.
+  ```bash
+  HF_HOME=/path/to/hf-cache uv run python src/train_eagle_head.py --epochs 5
+  HF_HOME=/path/to/hf-cache uv run python src/train_eagle_head.py --loss eagle --epochs 10  # paper loss
+  uv run tensorboard --logdir data/draft-head/runs --port 6006   # live curves
+  ```
+  - `--n-layers 2` stacks two decoder layers (the capacity probe — see
+    below). `--resume` continues from the best checkpoint of the SAME depth;
+    `--self-test` runs a tiny synthetic wiring check (CPU-only).
+  - `--loss mse|eagle` picks the objective. `mse` (default) = pure feature
+    MSE — what all the Phase-0 runs used. `eagle` = the paper's **actual**
+    loss (arXiv 2401.15077 §3.2): Smooth L1 on the features + 0.1 ×
+    cross-entropy between the frozen decode path's logits and the true token
+    two ahead (`--ce-weight` tunes the 0.1).
+
+---
+
+# Run log (appended by `src/train_eagle_head.py`)
 
 The heavy per-epoch detail lives in the gitignored `data/draft-head/train_report.json`
 (GBs of tensors sit in `data/`, so it can never be committed). This file is the
-small, tracked record: **`train_head.py` appends a new section here after every
+small, tracked record: **`src/train_eagle_head.py` appends a new section here after every
 completed run** (fresh or resume), so the training story ships to GitHub without
 the cache.
 
@@ -21,7 +96,7 @@ Gate: **PASS ≥ 0.50 · BORDERLINE 0.42–0.50 · STOP < 0.42**.
 | 3.0M-token cache (full corpus) | 1-layer (85M) | mse | 1–100 | **0.485** @ e96 | BORDERLINE |
 | 3.0M-token cache | 2-layer (163M) | mse | 1–40 | **0.474** @ e40 | BORDERLINE |
 
-**What these three runs taught us** (full story in `draft-head/README.md`):
+**What these three runs taught us** (the full story is in the intro above):
 
 - More data was the first real lever: 500K → 3.0M tokens lifted the ceiling
   0.376 → 0.485 while `val_mse` kept falling.
