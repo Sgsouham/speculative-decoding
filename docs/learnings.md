@@ -250,6 +250,80 @@ The same-family pairs that the economics say would win (needing more than our
 
 ---
 
+## What would show the promise — the pairs (from the open-source catalog)
+
+A natural question after all this losing: *if there were no hardware limit,
+which freely available models would actually show the trick working?* The
+answer follows directly from everything measured here, and the catalog has
+documented winners for both levels of the trick.
+
+First, the two levels pair differently:
+
+- **Vanilla speculative decoding** is a *pair of two models* — a small,
+  separate, pretrained **draft** model and a big **target**. (Our main-story
+  harness.)
+- **EAGLE** is *one model plus a small trained head* — the "draft" is a tiny
+  network trained on the target's *own* internal thinking, so there is no
+  second pretrained model. The question becomes which **target** to pick, not
+  which pair. (Our draft-head chapter.)
+
+### Vanilla pairs that are documented winners
+
+| Draft | Target | Why |
+|---|---|---|
+| Llama-3.2-1B | Llama-3.1-8B | The vLLM/Hugging Face canonical example; the smallest config where the economics start to work (~1.4–1.6× measured in the wild). |
+| Llama-3.2-1B / 3B | Llama-3.1-70B | The community favorite — same tokenizer, huge target; the real 2–3× lives here. Also Hugging Face's official *assisted generation* example. |
+| Qwen2.5-0.5B | Qwen2.5-32B / 72B | The direct extrapolation of *our own M3 pairs* — the same family we already measured accepting at 52–65%, scaled up 10–20×. The safest bet given our data. |
+| Qwen2.5-Coder-1.5B | Qwen2.5-Coder-32B | Same-family coder pair that community members report actually winning on consumer hardware. |
+
+### EAGLE targets that are documented winners
+
+| Target | Published result |
+|---|---|
+| Vicuna-33B | EAGLE-1/2's workhorse — 2.7×–4× (Spec-Bench: 2.4–2.5× across scales) |
+| LLaMA2-Chat-70B | EAGLE-1's flagship — 2.7–3.5× |
+| Mixtral-8x7B | EAGLE-2 — ~3.5× (proves the trick works on MoE targets too) |
+| DeepSeek-67B | EAGLE-3's flagship — ~2.7× |
+| Llama-3.1-70B | AWS Neuron ships a full EAGLE tutorial for exactly this target |
+| Mistral-Large-3 (67B) | **Mistral itself published a 12B EAGLE draft on Hugging Face** — zero training needed, vendor-blessed |
+
+### Why these work and ours didn't — one rule
+
+Our own experiments *prove* the selection rule once read correctly:
+
+1. **Acceptance was never the binding constraint.** Every same-family M3 pair
+   accepted ~2 of 4 drafts (τ ≈ 2) and still lost at 1.5–3B scale — the fixed
+   overhead (~90 ms per cycle) exceeded the target's own 29–36 ms per token.
+2. **The rule is pure economics: the target's forward pass must dwarf the
+   draft's cost.** A 70B target costs ~10–20× more per token than our 3B. The
+   *same* τ ≈ 2 that lost at 3B wins at 70B — the overhead becomes a rounding
+   error. Every published winner has a target ≥ 7B; most are 30–70B.
+3. **EAGLE's draft is nearly free on big targets.** The head reuses the
+   target's early layers and adds a few small ones — so on a 70B target the
+   draft costs a fraction of a percent of the target's forward, and even
+   modest agreement (τ ≈ 1) wins. That is why EAGLE's published numbers
+   (2.7–4×) beat vanilla's (~1.4–2×) at the same scale.
+
+**The kitchen analogy, extended:** the chef (target) was only slightly more
+skilled than the apprentice (draft) in our kitchen, so checking cost almost
+as much as cooking. In a professional kitchen (a 30–70B model), the chef is
+*so* much slower per dish that even an apprentice who is right half the time
+doubles output — and an EAGLE apprentice who was trained *by* that chef
+(read: on the chef's own habits) does even better.
+
+### The no-hardware-limit plan worth running
+
+1. **Vanilla demo:** Llama-3.2-1B → Llama-3.1-70B — the most-documented pair,
+   expect ~2×, verifiable with our three-gate harness.
+2. **EAGLE on top:** train the head on Llama-3.1-70B (AWS Neuron proves the
+   toolchain), or skip training entirely with Mistral's published 12B EAGLE
+   draft for Mistral-Large-3 — the cleanest "see the promise" option.
+3. **Direct continuation of our work:** Qwen2.5-0.5B → Qwen2.5-32B vanilla,
+   then an EAGLE head on Qwen2.5-32B — same family we already have acceptance
+   data for, so the only new variable is the scale the economics need.
+
+---
+
 ## A tiny glossary (for the non-technical reader)
 
 | Term | Meaning |
